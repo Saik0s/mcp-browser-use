@@ -1,0 +1,76 @@
+# Changes Made to Fix Deep Research Functionality
+
+## Issue 1: Parameter Name Mismatch
+
+In `server.py`, the function signature parameters didn't match the actual parameters used in the function call:
+
+### Original Code (with issue):
+```python
+@server.tool()
+async def run_deep_search(
+    ctx: Context,
+    research_task: str,
+    max_search_iteration_input: Optional[int] = 10,
+    max_query_per_iter_input: Optional[int] = 3,
+) -> str:
+    try:
+        (
+            markdown_content,
+            file_path,
+        ) = _run_deep_search(
+            research_task=research_task,
+            max_search_iterations=max_search_iterations,  # Wrong variable name
+            max_query_per_iteration=max_query_per_iteration,  # Wrong variable name
+            # other parameters...
+        )
+```
+
+### Fixed Code:
+```python
+@server.tool()
+async def run_deep_search(
+    ctx: Context,
+    research_task: str,
+    max_search_iteration_input: Optional[int] = 10,
+    max_query_per_iter_input: Optional[int] = 3,
+) -> str:
+    try:
+        (
+            markdown_content,
+            file_path,
+        ) = _run_deep_search(
+            research_task=research_task,
+            max_search_iteration_input=max_search_iteration_input,  # Fixed variable name
+            max_query_per_iter_input=max_query_per_iter_input,  # Fixed variable name
+            # other parameters...
+        )
+```
+
+## Issue 2: Missing Await in Coroutine Call
+
+In `server.py`, the `_run_deep_search` function is an async function but was being called without awaiting it:
+
+### Original Code (with issue):
+```python
+(
+    markdown_content,
+    file_path,
+) = _run_deep_search(  # Missing await keyword
+    # parameters...
+)
+```
+
+### Fixed Code:
+```python
+(
+    markdown_content,
+    file_path,
+) = await _run_deep_search(  # Added await keyword
+    # parameters...
+)
+```
+
+These fixes resolve the following errors:
+1. "Error during deep research execution: run_deep_search() got an unexpected keyword argument 'max_search_iterations'. Did you mean 'max_search_iteration_input'?"
+2. "Error during deep research execution: name 'max_search_iterations' is not defined"
+3. "Cannot unpack non-iterable coroutine object" 

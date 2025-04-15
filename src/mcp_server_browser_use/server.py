@@ -92,8 +92,8 @@ def serve() -> FastMCP:
     async def run_deep_search(
         ctx: Context,
         research_task: str,
-        max_search_iterations: Optional[int] = 10,
-        max_query_per_iteration: Optional[int] = 3,
+        max_search_iteration_input: Optional[int] = 10,
+        max_query_per_iter_input: Optional[int] = 3,
     ) -> str:
         """Performs deep search synchronously and waits for the report."""
 
@@ -101,10 +101,10 @@ def serve() -> FastMCP:
             (
                 markdown_content,
                 file_path,
-            ) = _run_deep_search(
+            ) = await _run_deep_search(
                 research_task=research_task,
-                max_search_iterations=max_search_iterations,
-                max_query_per_iteration=max_query_per_iteration,
+                max_search_iteration_input=max_search_iteration_input,
+                max_query_per_iter_input=max_query_per_iter_input,
                 llm_provider=os.getenv("MCP_MODEL_PROVIDER", "anthropic"),
                 llm_model_name=os.getenv("MCP_MODEL_NAME", "claude-3-7-sonnet-20250219"),
                 llm_num_ctx=16000,
