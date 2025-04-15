@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 
 from browser_use.agent.service import Agent
 from browser_use.browser.browser import Browser, BrowserConfig
@@ -14,7 +15,7 @@ from mcp_server_browser_use.browser.custom_browser import CustomBrowser
 from mcp_server_browser_use.controller.custom_controller import CustomController
 from mcp_server_browser_use.utils import utils
 from mcp_server_browser_use.utils.agent_state import AgentState
-from mcp_server_browser_use.utils.utils import MissingAPIKeyError, get_latest_files
+from mcp_server_browser_use.utils.utils import MissingAPIKeyError, get_latest_files, RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,11 @@ async def run_browser_agent(
     chrome_cdp,
     max_input_tokens,
 ):
+    # Initialize the rate limiter
+    rate_limiter = RateLimiter()
+    await rate_limiter.acquire()
+    logger.info("Rate limit check passed, initializing browser agent")
+    
     try:
         # Disable recording if the checkbox is unchecked
         if not enable_recording:
@@ -96,8 +102,8 @@ async def run_browser_agent(
         # Ensure the recording directory exists if recording is enabled
         if save_recording_path:
             os.makedirs(save_recording_path, exist_ok=True)
-
-        # Run the agent
+            
+        global _global_browser, _global_browser_context, _global_agent
         llm = utils.get_llm_model(
             provider=llm_provider,
             model_name=llm_model_name,
@@ -105,76 +111,66 @@ async def run_browser_agent(
             temperature=llm_temperature,
             base_url=llm_base_url,
             api_key=llm_api_key,
+            tool_calling_method=tool_calling_method,
+            max_input_tokens=max_input_tokens,
         )
+
         if agent_type == "org":
             (
                 final_result,
                 errors,
                 model_actions,
                 model_thoughts,
+                gif_path,
                 trace_file,
                 history_file,
             ) = await run_org_agent(
-                llm=llm,
-                use_own_browser=use_own_browser,
-                keep_browser_open=keep_browser_open,
-                headless=headless,
-                disable_security=disable_security,
-                window_w=window_w,
-                window_h=window_h,
-                save_recording_path=save_recording_path,
-                save_agent_history_path=save_agent_history_path,
-                save_trace_path=save_trace_path,
-                task=task,
-                max_steps=max_steps,
-                use_vision=use_vision,
-                max_actions_per_step=max_actions_per_step,
-                tool_calling_method=tool_calling_method,
-                chrome_cdp=chrome_cdp,
-                max_input_tokens=max_input_tokens,
+                llm,
+                use_own_browser,
+                keep_browser_open,
+                headless,
+                disable_security,
+                window_w,
+                window_h,
+                save_recording_path,
+                save_agent_history_path,
+                save_trace_path,
+                task,
+                add_infos,
+                max_steps,
+                use_vision,
+                max_actions_per_step,
+                chrome_cdp,
             )
-        elif agent_type == "custom":
+        else:
             (
                 final_result,
                 errors,
                 model_actions,
                 model_thoughts,
+                gif_path,
                 trace_file,
                 history_file,
             ) = await run_custom_agent(
-                llm=llm,
-                use_own_browser=use_own_browser,
-                keep_browser_open=keep_browser_open,
-                headless=headless,
-                disable_security=disable_security,
-                window_w=window_w,
-                window_h=window_h,
-                save_recording_path=save_recording_path,
-                save_agent_history_path=save_agent_history_path,
-                save_trace_path=save_trace_path,
-                task=task,
-                add_infos=add_infos,
-                max_steps=max_steps,
-                use_vision=use_vision,
-                max_actions_per_step=max_actions_per_step,
-                tool_calling_method=tool_calling_method,
-                chrome_cdp=chrome_cdp,
-                max_input_tokens=max_input_tokens,
+                llm,
+                use_own_browser,
+                keep_browser_open,
+                headless,
+                disable_security,
+                window_w,
+                window_h,
+                save_recording_path,
+                save_agent_history_path,
+                save_trace_path,
+                task,
+                add_infos,
+                max_steps,
+                use_vision,
+                max_actions_per_step,
+                tool_calling_method,
+                chrome_cdp,
+                max_input_tokens,
             )
-        else:
-            raise ValueError(f"Invalid agent type: {agent_type}")
-
-        # Get the list of videos after the agent runs (if recording is enabled)
-        # latest_video = None
-        # if save_recording_path:
-        #     new_videos = set(
-        #         glob.glob(os.path.join(save_recording_path, "*.[mM][pP]4"))
-        #         + glob.glob(os.path.join(save_recording_path, "*.[wW][eE][bB][mM]"))
-        #     )
-        #     if new_videos - existing_videos:
-        #         latest_video = list(new_videos - existing_videos)[0]  # Get the first new video
-
-        gif_path = os.path.join(os.path.dirname(__file__), "agent_history.gif")
 
         return (
             final_result,
@@ -185,24 +181,22 @@ async def run_browser_agent(
             trace_file,
             history_file,
         )
-
     except MissingAPIKeyError as e:
         logger.error(str(e))
         raise e
-
     except Exception as e:
         import traceback
 
-        traceback.print_exc()
-        errors = str(e) + "\n" + traceback.format_exc()
+        error_msg = f"Error during browser agent run: {str(e)}"
+        logger.error(f"{error_msg}\n{traceback.format_exc()}")
         return (
-            "",  # final_result
-            errors,  # errors
-            "",  # model_actions
-            "",  # model_thoughts
-            None,  # latest_video
-            None,  # history_file
-            None,  # trace_file
+            "Error: Task failed due to a system error. Please try again later.",
+            [str(e)],
+            [],
+            [],
+            None,
+            None,
+            None,
         )
 
 
@@ -287,11 +281,14 @@ async def run_org_agent(
 
         trace_file = get_latest_files(save_trace_path)
 
+        gif_path = os.path.join(os.path.dirname(__file__), "agent_history.gif")
+
         return (
             final_result,
             errors,
             model_actions,
             model_thoughts,
+            gif_path,
             trace_file.get(".zip"),
             history_file,
         )
@@ -405,11 +402,14 @@ async def run_custom_agent(
 
         trace_file = get_latest_files(save_trace_path)
 
+        gif_path = os.path.join(os.path.dirname(__file__), "agent_history.gif")
+
         return (
             final_result,
             errors,
             model_actions,
             model_thoughts,
+            gif_path,
             trace_file.get(".zip"),
             history_file,
         )
@@ -461,32 +461,49 @@ async def run_deep_search(
 ):
     from mcp_server_browser_use.utils.deep_research import deep_research
 
-    global _global_agent_state
+    # Initialize the rate limiter
+    rate_limiter = RateLimiter()
+    await rate_limiter.acquire()
+    logger.info("Rate limit check passed, initializing deep research")
 
-    # Clear any previous stop request
-    _global_agent_state.clear_stop()
+    try:
+        global _global_agent_state
 
-    llm = utils.get_llm_model(
-        provider=llm_provider,
-        model_name=llm_model_name,
-        num_ctx=llm_num_ctx,
-        temperature=llm_temperature,
-        base_url=llm_base_url,
-        api_key=llm_api_key,
-    )
-    markdown_content, file_path = await deep_research(
-        research_task,
-        llm,
-        _global_agent_state,
-        max_search_iterations=max_search_iteration_input,
-        max_query_num=max_query_per_iter_input,
-        use_vision=use_vision,
-        headless=headless,
-        use_own_browser=use_own_browser,
-        chrome_cdp=chrome_cdp,
-    )
+        # Clear any previous stop requests
+        _global_agent_state.clear_stop()
 
-    return (
-        markdown_content,
-        file_path,
-    )
+        llm = utils.get_llm_model(
+            provider=llm_provider,
+            model_name=llm_model_name,
+            num_ctx=llm_num_ctx,
+            temperature=llm_temperature,
+            base_url=llm_base_url,
+            api_key=llm_api_key,
+        )
+
+        # Get max duration from env or default to 240 seconds (4 minutes)
+        max_duration_seconds = int(os.getenv("MCP_MAX_DURATION_SECONDS", "240"))
+        
+        # Run the deep research
+        markdown_content, file_path = await deep_research(
+            task=research_task,
+            llm=llm,
+            agent_state=_global_agent_state,
+            max_search_iterations=max_search_iteration_input,
+            max_query_num=max_query_per_iter_input,
+            max_duration_seconds=max_duration_seconds,
+            use_vision=use_vision,
+            use_own_browser=use_own_browser,
+            headless=headless,
+            chrome_cdp=chrome_cdp,
+        )
+
+        return markdown_content, file_path
+    except MissingAPIKeyError as e:
+        logger.error(str(e))
+        raise e
+    except Exception as e:
+        import traceback
+
+        logger.error(f"Error during deep search: {str(e)}\n{traceback.format_exc()}")
+        raise e

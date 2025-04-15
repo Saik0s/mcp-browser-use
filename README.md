@@ -172,6 +172,7 @@ Configure the server using environment variables. You can set these in your syst
 | `LOG_FILE`                      | Path for the server log file.                                                                           | No                             | `mcp_server_browser_use.log`      | `/var/log/mcp_browser.log`        |
 | `BROWSER_USE_LOGGING_LEVEL`     | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).                                        | No                             | `INFO`                            | `DEBUG`                           |
 | `ANONYMIZED_TELEMETRY`          | Enable/disable anonymized telemetry (`true`/`false`).                                                   | No                             | `true`                            | `false`                           |
+| `REQUESTS_PER_MINUTE`           | Maximum number of requests to allow per minute (rate limiting).                                         | No                             | `15`                              | `30`                              |
 
 **Supported LLM Providers (`MCP_MODEL_PROVIDER`):**
 
