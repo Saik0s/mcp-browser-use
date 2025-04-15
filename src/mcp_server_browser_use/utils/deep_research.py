@@ -5,6 +5,7 @@ import logging
 import os
 import re
 from uuid import uuid4
+from datetime import datetime
 
 from browser_use.agent.views import ActionResult
 from browser_use.browser.browser import BrowserConfig
@@ -20,6 +21,7 @@ from mcp_server_browser_use.agent.custom_prompts import (
 )
 from mcp_server_browser_use.browser.custom_browser import CustomBrowser
 from mcp_server_browser_use.controller.custom_controller import CustomController
+from mcp_server_browser_use.utils.utils import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +32,21 @@ async def deep_research(task, llm, agent_state=None, **kwargs):
     logger.info(f"Save Deep Research at: {save_dir}")
     os.makedirs(save_dir, exist_ok=True)
 
-    # max qyery num per iteration
+    # max query num per iteration
     max_query_num = kwargs.get("max_query_num", 3)
+    
+    # Add timeout mechanism - default to 4 minutes (240 seconds) to stay under the 5-minute MCP timeout
+    max_duration_seconds = kwargs.get("max_duration_seconds", 240)
+    start_time = datetime.now()
+    
+    # Function to check if we're approaching the timeout
+    def is_timeout_approaching():
+        elapsed = (datetime.now() - start_time).total_seconds()
+        remaining = max_duration_seconds - elapsed
+        if remaining <= 60:  # If less than 1 minute remains
+            logger.warning(f"Research timeout approaching. {remaining:.1f} seconds remaining of {max_duration_seconds}s limit.")
+            return True
+        return False
 
     use_own_browser = kwargs.get("use_own_browser", False)
     extra_chromium_args = []
@@ -62,6 +77,9 @@ async def deep_research(task, llm, agent_state=None, **kwargs):
         browser_context = None
 
     controller = CustomController()
+
+    # Initialize the rate limiter
+    rate_limiter = RateLimiter()
 
     @controller.registry.action(
         "Extract page content to get the pure markdown.",
@@ -179,10 +197,21 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
         while search_iteration < max_search_iterations:
             search_iteration += 1
             logger.info(f"Start {search_iteration}th Search...")
+            
+            # Check if we're approaching the timeout before starting a new iteration
+            if is_timeout_approaching():
+                logger.warning("Stopping research due to approaching timeout")
+                break
+                
             history_query_ = json.dumps(history_query, indent=4)
             history_infos_ = json.dumps(history_infos, indent=4)
             query_prompt = f"This is search {search_iteration} of {max_search_iterations} maximum searches allowed.\n User Instruction:{task} \n Previous Queries:\n {history_query_} \n Previous Search Results:\n {history_infos_}\n"
             search_messages.append(HumanMessage(content=query_prompt))
+            
+            # Apply rate limiting before LLM invocation
+            await rate_limiter.acquire()
+            logger.info("Rate limit check passed, invoking LLM for search query generation")
+            
             ai_query_msg = llm.invoke(search_messages[:1] + search_messages[1:][-1:])
             search_messages.append(ai_query_msg)
             if hasattr(ai_query_msg, "reasoning_content"):
@@ -211,6 +240,10 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
                 "2. When opening a PDF file, please remember to extract the content using extract_content instead of simply opening it for the user to view.\n"
             )
             if use_own_browser:
+                # Apply rate limiting before browser agent execution
+                await rate_limiter.acquire()
+                logger.info("Rate limit check passed, running browser agent")
+                
                 agent = CustomAgent(
                     task=query_tasks[0],
                     llm=llm,
@@ -248,7 +281,16 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
                     )
                     for task in query_tasks
                 ]
-                query_results = await asyncio.gather(*[agent.run(max_steps=kwargs.get("max_steps", 10)) for agent in agents])
+                
+                # For multiple agents, apply rate limiting for each agent
+                agent_tasks = []
+                for agent in agents:
+                    # Apply rate limiting before each agent execution
+                    await rate_limiter.acquire()
+                    logger.info("Rate limit check passed, running browser agent")
+                    agent_tasks.append(agent.run(max_steps=kwargs.get("max_steps", 10)))
+                
+                query_results = await asyncio.gather(*agent_tasks)
 
             if agent_state and agent_state.is_stop_requested():
                 # Stop
@@ -288,6 +330,11 @@ Provide your output as a JSON formatted list. Each item in the list must adhere 
                     history_infos.extend(new_record_infos)
             if agent_state and agent_state.is_stop_requested():
                 # Stop
+                break
+
+            # After completing each search iteration, check timeout again
+            if is_timeout_approaching():
+                logger.warning("Stopping research after iteration due to approaching timeout")
                 break
 
         logger.info("\nFinish Searching, Start Generating Report...")

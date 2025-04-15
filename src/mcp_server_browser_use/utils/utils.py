@@ -238,6 +238,120 @@ model_names = {
 }
 
 
+import time
+import logging
+import asyncio
+from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
+
+class RateLimiter:
+    """
+    A rate limiter that respects the REQUESTS_PER_MINUTE environment variable.
+    Provides both synchronous and asynchronous interfaces.
+    When REQUESTS_PER_MINUTE is not specified, no rate limiting is applied.
+    """
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(RateLimiter, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+            
+        self._initialized = True
+        self._request_times = []
+        
+        # Check if REQUESTS_PER_MINUTE is explicitly set in environment
+        requests_per_minute_env = os.getenv("REQUESTS_PER_MINUTE")
+        self._rate_limiting_enabled = requests_per_minute_env is not None
+        
+        # Parse the value if set, otherwise we won't use it (unlimited)
+        if self._rate_limiting_enabled:
+            self._requests_per_minute = int(requests_per_minute_env)
+            logger.info(f"Rate limiter initialized with {self._requests_per_minute} requests per minute")
+        else:
+            self._requests_per_minute = None
+            logger.info("Rate limiter initialized with no limit (unlimited requests)")
+            
+        self._lock = asyncio.Lock()
+    
+    def _clean_old_requests(self):
+        """Remove request timestamps older than 1 minute"""
+        # Only clean if rate limiting is enabled
+        if not self._rate_limiting_enabled:
+            return
+            
+        now = datetime.now()
+        self._request_times = [t for t in self._request_times if now - t < timedelta(minutes=1)]
+    
+    async def acquire(self):
+        """
+        Asynchronously wait until a request can be made according to the rate limit.
+        If rate limiting is disabled, this returns immediately.
+        """
+        # Fast path if rate limiting is disabled
+        if not self._rate_limiting_enabled:
+            return
+            
+        async with self._lock:
+            while True:
+                self._clean_old_requests()
+                if len(self._request_times) < self._requests_per_minute:
+                    self._request_times.append(datetime.now())
+                    return
+                
+                # Calculate sleep time
+                oldest_allowed = datetime.now() - timedelta(minutes=1)
+                if self._request_times:
+                    sleep_time = (self._request_times[0] - oldest_allowed).total_seconds()
+                    if sleep_time > 0:
+                        logger.debug(f"Rate limit hit, waiting {sleep_time:.2f} seconds")
+                        await asyncio.sleep(sleep_time + 0.1)  # Add a small buffer
+                    else:
+                        # No need to wait, but we need to re-check the conditions
+                        continue
+                else:
+                    # No request times recorded, no need to wait
+                    self._request_times.append(datetime.now())
+                    return
+    
+    def acquire_sync(self):
+        """
+        Synchronously wait until a request can be made according to the rate limit.
+        If rate limiting is disabled, this returns immediately.
+        """
+        # Fast path if rate limiting is disabled
+        if not self._rate_limiting_enabled:
+            return
+            
+        while True:
+            # We need to handle the lock synchronously
+            self._clean_old_requests()
+            if len(self._request_times) < self._requests_per_minute:
+                self._request_times.append(datetime.now())
+                return
+            
+            # Calculate sleep time
+            oldest_allowed = datetime.now() - timedelta(minutes=1)
+            if self._request_times:
+                sleep_time = (self._request_times[0] - oldest_allowed).total_seconds()
+                if sleep_time > 0:
+                    logger.debug(f"Rate limit hit, waiting {sleep_time:.2f} seconds")
+                    time.sleep(sleep_time + 0.1)  # Add a small buffer
+                else:
+                    # We can remove the oldest request and continue
+                    self._request_times.pop(0)
+            else:
+                # No request times recorded, no need to wait
+                self._request_times.append(datetime.now())
+                return
+
+
 class MissingAPIKeyError(Exception):
     """Custom exception for missing API key."""
 

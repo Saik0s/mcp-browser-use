@@ -1,5 +1,50 @@
 # Changes Made to Fix Deep Research Functionality
 
+## Issue 3: Added Timeout Mechanism for Deep Research
+
+Added a timeout mechanism to ensure the deep research process terminates gracefully before hitting the MCP timeout limit (approximately 5 minutes):
+
+### Changes made:
+- Implemented a 4-minute (240 seconds) default timeout in the `deep_research` function
+- Made timeout configurable via `MCP_MAX_DURATION_SECONDS` environment variable
+- Added timeout checks at key points in the research workflow:
+  1. Before starting a new search iteration
+  2. After completing each search iteration
+- Ensured graceful termination with partial results when approaching timeout
+- Added warning logs when timeout is approaching
+- Properly documented environment variables in `server.py`
+- Integrated with existing rate limiting mechanism (respecting `REQUESTS_PER_MINUTE`)
+
+### Code changes:
+- Added to `deep_research.py`:
+  ```python
+  # Add timeout mechanism - default to 4 minutes (240 seconds) to stay under the 5-minute MCP timeout
+  max_duration_seconds = kwargs.get("max_duration_seconds", 240)
+  start_time = datetime.now()
+  
+  # Function to check if we're approaching the timeout
+  def is_timeout_approaching():
+      elapsed = (datetime.now() - start_time).total_seconds()
+      remaining = max_duration_seconds - elapsed
+      if remaining <= 60:  # If less than 1 minute remains
+          logger.warning(f"Research timeout approaching. {remaining:.1f} seconds remaining of {max_duration_seconds}s limit.")
+          return True
+      return False
+  ```
+
+- Modified `run_deep_search` function in `run_agents.py` to pass the timeout parameter:
+  ```python
+  # Get max duration from env or default to 240 seconds (4 minutes)
+  max_duration_seconds = int(os.getenv("MCP_MAX_DURATION_SECONDS", "240"))
+  
+  # Run the deep research
+  markdown_content, file_path = await deep_research(
+      # other parameters...
+      max_duration_seconds=max_duration_seconds,
+      # other parameters...
+  )
+  ```
+
 ## Issue 1: Parameter Name Mismatch
 
 In `server.py`, the function signature parameters didn't match the actual parameters used in the function call:

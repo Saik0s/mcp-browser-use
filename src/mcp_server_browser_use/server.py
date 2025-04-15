@@ -96,6 +96,9 @@ def serve() -> FastMCP:
         max_query_per_iter_input: Optional[int] = 3,
     ) -> str:
         """Performs deep search synchronously and waits for the report."""
+        # Environment variables that control deep search:
+        # - MCP_MAX_DURATION_SECONDS: maximum duration for research (default: 240)
+        # - REQUESTS_PER_MINUTE: maximum API requests per minute (if set)
 
         try:
             (

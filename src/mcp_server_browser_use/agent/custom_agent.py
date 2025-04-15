@@ -35,6 +35,7 @@ from mcp_server_browser_use.agent.custom_views import (
     CustomAgentState,
     CustomAgentStepInfo,
 )
+from mcp_server_browser_use.utils.utils import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,9 @@ class CustomAgent(Agent):
         injected_agent_state: Optional[AgentState] = None,
         context: Context | None = None,
     ):
+        # Initialize the rate limiter
+        self.rate_limiter = RateLimiter()
+        
         super(CustomAgent, self).__init__(
             task=task,
             llm=llm,
@@ -278,7 +282,10 @@ class CustomAgent(Agent):
 
     @time_execution_async("--step")
     async def step(self, step_info: Optional[CustomAgentStepInfo] = None) -> None:
-        """Execute one step of the task"""
+        # Apply rate limiting before step execution
+        await self.rate_limiter.acquire()
+        logger.debug("Rate limit check passed, executing agent step")
+
         logger.info(f"\n📍 Step {self.state.n_steps}")
         state = None
         model_output = None
@@ -357,6 +364,9 @@ class CustomAgent(Agent):
             return
 
         except Exception as e:
+            error_message = f"Error during step: {str(e)}"
+            logger.error(error_message)
+            self.state.consecutive_failures += 1
             result = await self._handle_step_error(e)
             self.state.last_result = result
 
@@ -462,3 +472,11 @@ class CustomAgent(Agent):
                     output_path = self.settings.generate_gif
 
                 create_history_gif(task=self.task, history=self.state.history, output_path=output_path)
+
+    async def multi_act(self, action_list, check_for_new_elements=True):
+        # Apply rate limiting before performing browser actions
+        await self.rate_limiter.acquire()
+        logger.debug("Rate limit check passed, executing browser actions")
+        
+        # Call the parent method
+        return await super().multi_act(action_list, check_for_new_elements)
