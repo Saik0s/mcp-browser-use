@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/saik0s-mcp-browser-use-badge.png)](https://mseep.ai/app/saik0s-mcp-browser-use)
+
 <img src="./assets/header.png" alt="Browser Use Web UI" width="full"/>
 
 <br/>
