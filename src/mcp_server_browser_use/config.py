@@ -50,6 +50,16 @@ class ServerSettings(BaseSettings):
     logging_level: str = Field(default="INFO")
 
 
+class ResearchSettings(BaseSettings):
+    """Deep research configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="MCP_RESEARCH_")
+
+    max_searches: int = Field(default=5, description="Maximum number of searches per research task")
+    save_directory: Optional[str] = Field(default=None, description="Directory to save research reports")
+    search_timeout: int = Field(default=120, description="Timeout per search in seconds")
+
+
 class AppSettings(BaseSettings):
     """Root application settings."""
 
@@ -59,6 +69,7 @@ class AppSettings(BaseSettings):
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
+    research: ResearchSettings = Field(default_factory=ResearchSettings)
 
 
 settings = AppSettings()
