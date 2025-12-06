@@ -16,6 +16,7 @@ class LLMSettings(BaseSettings):
     provider: ProviderType = Field(default="anthropic")
     model_name: str = Field(default="claude-sonnet-4-20250514")
     api_key: Optional[SecretStr] = Field(default=None)
+    base_url: Optional[str] = Field(default=None, description="Custom base URL for OpenAI-compatible APIs")
 
     def get_api_key(self) -> Optional[str]:
         """Extract API key value from SecretStr."""
@@ -28,6 +29,8 @@ class BrowserSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MCP_BROWSER_")
 
     headless: bool = Field(default=True)
+    proxy_server: Optional[str] = Field(default=None, description="Proxy server URL (e.g., http://host:8080)")
+    proxy_bypass: Optional[str] = Field(default=None, description="Comma-separated hosts to bypass proxy")
 
 
 class AgentSettings(BaseSettings):

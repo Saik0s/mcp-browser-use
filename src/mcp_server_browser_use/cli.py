@@ -18,6 +18,7 @@ def run(
 ) -> None:
     """Execute a browser automation task."""
     from browser_use import Agent, BrowserProfile
+    from browser_use.browser.profile import ProxySettings
 
     async def _run() -> str:
         try:
@@ -25,11 +26,15 @@ def run(
                 provider=settings.llm.provider,
                 model=settings.llm.model_name,
                 api_key=settings.llm.get_api_key(),
+                base_url=settings.llm.base_url,
             )
         except LLMProviderError as e:
             return f"Error: {e}"
 
-        profile = BrowserProfile(headless=settings.browser.headless)
+        proxy = None
+        if settings.browser.proxy_server:
+            proxy = ProxySettings(server=settings.browser.proxy_server, bypass=settings.browser.proxy_bypass)
+        profile = BrowserProfile(headless=settings.browser.headless, proxy=proxy)
         steps = max_steps if max_steps is not None else settings.agent.max_steps
 
         try:
@@ -55,7 +60,9 @@ def config() -> None:
     """Show current configuration."""
     print(f"Provider: {settings.llm.provider}")
     print(f"Model: {settings.llm.model_name}")
+    print(f"Base URL: {settings.llm.base_url or '(default)'}")
     print(f"Headless: {settings.browser.headless}")
+    print(f"Proxy: {settings.browser.proxy_server or '(none)'}")
     print(f"Max Steps: {settings.agent.max_steps}")
 
 

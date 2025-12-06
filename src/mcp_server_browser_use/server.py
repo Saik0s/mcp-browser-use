@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 from browser_use import Agent, BrowserProfile
+from browser_use.browser.profile import ProxySettings
 from mcp.server.fastmcp import Context, FastMCP
 
 from .config import settings
@@ -45,12 +46,16 @@ def serve() -> FastMCP:
                 provider=settings.llm.provider,
                 model=settings.llm.model_name,
                 api_key=settings.llm.get_api_key(),
+                base_url=settings.llm.base_url,
             )
         except LLMProviderError as e:
             logger.error(f"LLM initialization failed: {e}")
             return f"Error: {e}"
 
-        profile = BrowserProfile(headless=settings.browser.headless)
+        proxy = None
+        if settings.browser.proxy_server:
+            proxy = ProxySettings(server=settings.browser.proxy_server, bypass=settings.browser.proxy_bypass)
+        profile = BrowserProfile(headless=settings.browser.headless, proxy=proxy)
         steps = max_steps if max_steps is not None else settings.agent.max_steps
 
         try:
