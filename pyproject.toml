@@ -1,6 +1,6 @@
 [project]
 name = "mcp_server_browser_use"
-version = "0.1.8"
+version = "0.2.0"
 description = "MCP server for browser-use"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,18 +14,10 @@ classifiers = [
 ]
 
 dependencies = [
+  "browser-use>=0.10.1",
+  "mcp>=1.10.1",
   "pydantic-settings>=2.0.0",
-  "mcp>=1.6.0",
   "typer>=0.12.0",
-  "browser-use==0.1.41",
-  "pyperclip==1.9.0",
-  "json-repair",
-  "langchain-mistralai==0.2.4",
-  "MainContentExtractor==0.0.4",
-  "langchain-ibm==0.3.10",
-  "langchain_mcp_adapters==0.0.9",
-  "langgraph==0.3.34",
-  "langchain-community",
 ]
 
 [build-system]
@@ -52,5 +44,5 @@ ignore = []
 line-length = 150
 target-version = "py311"
 
-[tool.uv]
-dev-dependencies = ["pyright>=1.1.378", "pytest>=8.3.3", "ruff>=0.6.9"]
+[dependency-groups]
+dev = ["pyright>=1.1.378", "pytest>=8.3.3", "pytest-asyncio>=0.24.0", "ruff>=0.6.9"]
