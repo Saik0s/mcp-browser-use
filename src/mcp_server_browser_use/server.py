@@ -1,10 +1,14 @@
 """MCP server exposing browser-use as tools with native background task support."""
 
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from browser_use import Agent, BrowserProfile
 from browser_use.browser.profile import ProxySettings
+
+if TYPE_CHECKING:
+    from browser_use.agent.views import AgentOutput
+    from browser_use.browser.views import BrowserStateSummary
 from fastmcp import FastMCP, TaskConfig
 from fastmcp.dependencies import CurrentContext, Progress
 from fastmcp.server.context import Context
@@ -62,6 +66,7 @@ def serve() -> FastMCP:
         Returns:
             Result of the browser automation task
         """
+        await ctx.info(f"Starting: {task}")
         logger.info(f"Starting browser agent task: {task[:100]}...")
 
         try:
@@ -71,10 +76,21 @@ def serve() -> FastMCP:
             return f"Error: {e}"
 
         steps = max_steps if max_steps is not None else settings.agent.max_steps
+        await progress.set_total(steps)
 
-        if progress:
-            await progress.set_total(steps)
-            await progress.set_message("Starting browser agent...")
+        # Track page changes only (not every step)
+        last_url: str | None = None
+
+        async def step_callback(
+            state: "BrowserStateSummary",
+            output: "AgentOutput",
+            step_num: int,
+        ) -> None:
+            nonlocal last_url
+            if state.url != last_url:
+                await ctx.info(f"→ {state.title or state.url}")
+                last_url = state.url
+            await progress.increment()
 
         try:
             agent = Agent(
@@ -82,16 +98,13 @@ def serve() -> FastMCP:
                 llm=llm,
                 browser_profile=profile,
                 max_steps=steps,
+                register_new_step_callback=step_callback,
             )
 
             result = await agent.run()
-
-            # Mark as complete
-            if progress:
-                await progress.set_total(1)
-                await progress.increment()
-
             final = result.final_result() or "Task completed without explicit result."
+
+            await ctx.info(f"Completed: {final[:100]}")
             logger.info(f"Agent completed: {final[:100]}...")
             return final
 
@@ -142,6 +155,7 @@ def serve() -> FastMCP:
             llm=llm,
             browser_profile=profile,
             progress=progress,
+            ctx=ctx,
         )
 
         report = await machine.run()

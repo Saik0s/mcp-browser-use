@@ -18,6 +18,7 @@ from .prompts import (
 if TYPE_CHECKING:
     from browser_use.llm.base import BaseChatModel
     from fastmcp.dependencies import Progress
+    from fastmcp.server.context import Context
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class ResearchMachine:
         llm: "BaseChatModel",
         browser_profile: BrowserProfile,
         progress: Optional["Progress"] = None,
+        ctx: Optional["Context"] = None,
     ):
         self.topic = topic
         self.max_searches = max_searches
@@ -40,6 +42,7 @@ class ResearchMachine:
         self.llm = llm
         self.browser_profile = browser_profile
         self.progress = progress
+        self.ctx = ctx
         self.search_results: list[SearchResult] = []
 
     async def _report_progress(self, message: Optional[str] = None, increment: bool = False, total: Optional[int] = None) -> None:
@@ -60,6 +63,8 @@ class ResearchMachine:
         await self._report_progress(total=total_steps)
 
         # Phase 1: Planning
+        if self.ctx:
+            await self.ctx.info(f"Planning: {self.topic}")
         await self._report_progress(message="Planning research approach...")
         logger.info(f"Planning: Generating queries for '{self.topic}'")
 
@@ -72,6 +77,8 @@ class ResearchMachine:
 
         # Phase 2: Executing searches
         for i, query in enumerate(queries):
+            if self.ctx:
+                await self.ctx.info(f"Searching ({i + 1}/{len(queries)})")
             await self._report_progress(message=f"Searching ({i + 1}/{len(queries)}): {query}")
             logger.info(f"Executing search {i + 1}/{len(queries)}: {query}")
 
@@ -80,6 +87,8 @@ class ResearchMachine:
             await self._report_progress(increment=True)
 
         # Phase 3: Synthesizing
+        if self.ctx:
+            await self.ctx.info("Synthesizing report")
         await self._report_progress(message="Synthesizing findings into report...")
         logger.info("Synthesizing report")
 
