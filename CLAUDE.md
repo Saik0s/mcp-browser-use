@@ -1,89 +1,127 @@
-# Development Guidelines
+# CLAUDE.md
 
-This document contains critical information about working with this codebase. Follow these guidelines precisely.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Core Development Rules
+## Project Overview
 
-1. Package Management
-   - ONLY use uv, NEVER pip
-   - Installation: `uv add package`
-   - Running tools: `uv run tool`
-   - Upgrading: `uv add --dev package --upgrade-package package`
-   - FORBIDDEN: `uv pip install`, `@latest` syntax
+MCP server exposing browser-use as tools for AI-driven browser automation. Implements the Model Context Protocol for natural language browser control and web research.
 
-2. Code Quality
-   - Type hints required for all code
-   - Public APIs must have docstrings
-   - Functions must be focused and small
-   - Follow existing patterns exactly
-   - Line length: 150 chars maximum
+## Common Commands
 
-3. Testing Requirements
-   - Framework: `uv run pytest`
-   - Async testing: use anyio, not asyncio
-   - Coverage: test edge cases and errors
-   - New features require tests
-   - Bug fixes require regression tests
+```bash
+# Install dependencies
+uv sync --dev
 
-## Python Tools
+# Install Playwright browsers (required for automation)
+uv run playwright install
 
-## Code Formatting
+# Run MCP server (stdio - default)
+uv run mcp-server-browser-use
 
-1. Ruff
-   - Format: `uv run ruff format .`
-   - Check: `uv run ruff check .`
-   - Fix: `uv run ruff check . --fix`
-   - Critical issues:
-     - Line length (150 chars)
-     - Import sorting (I001)
-     - Unused imports
-   - Line wrapping:
-     - Strings: use parentheses
-     - Function calls: multi-line with proper indent
-     - Imports: split into multiple lines
+# Run MCP server (HTTP - stateful)
+MCP_SERVER_TRANSPORT=streamable-http MCP_SERVER_PORT=8000 uv run mcp-server-browser-use
+# Server runs at http://localhost:8000/mcp
 
-2. Type Checking
-   - Tool: `uv run pyright`
-   - Requirements:
-     - Explicit None checks for Optional
-     - Type narrowing for strings
-     - Version warnings can be ignored if checks pass
+# Run MCP server (SSE transport)
+MCP_SERVER_TRANSPORT=sse MCP_SERVER_PORT=8000 uv run mcp-server-browser-use
 
-3. Pre-commit
-   - Config: `.pre-commit-config.yaml`
-   - Runs: on git commit
-   - Tools: Prettier (YAML/JSON), Ruff (Python)
-   - Ruff updates:
-     - Check PyPI versions
-     - Update config rev
-     - Commit config first
+# Run CLI
+uv run mcp-browser-cli -e .env run-browser-agent "Go to example.com"
+uv run mcp-browser-cli -e .env run-deep-research "Research topic"
 
-## Error Resolution
+# Testing
+uv run pytest                           # Run all tests
+uv run pytest tests/test_mcp_tools.py   # Run specific test file
+uv run pytest -k "test_name"            # Run single test by name
+uv run pytest -v --tb=short             # Verbose with short traceback
 
-1. CI Failures
-   - Fix order:
-     1. Formatting
-     2. Type errors
-     3. Linting
-   - Type errors:
-     - Get full line context
-     - Check Optional types
-     - Add type narrowing
-     - Verify function signatures
+# Code quality
+uv run ruff format .                    # Format code
+uv run ruff check .                     # Lint check
+uv run ruff check . --fix               # Auto-fix lint issues
+uv run pyright                          # Type checking
 
-2. Common Issues
-   - Line length150     - Break strings with parentheses
-     - Multi-line function calls
-     - Split imports
-   - Types:
-     - Add None checks
-     - Narrow string types
-     - Match existing patterns
+# Debug with MCP Inspector
+npx @modelcontextprotocol/inspector@latest \
+  -e MCP_LLM_PROVIDER=google \
+  -e MCP_LLM_MODEL_NAME=gemini-2.5-flash-preview-04-17 \
+  -e GOOGLE_API_KEY=$GOOGLE_API_KEY \
+  uv --directory . run mcp-server-browser-use
+```
 
-3. Best Practices
-   - Check git status before commits
-   - Run formatters before type checks
-   - Keep changes minimal
-   - Follow existing patterns
-   - Document public APIs
-   - Test thoroughly
+## Architecture
+
+```
+src/mcp_server_browser_use/
+├── server.py       # FastMCP server - defines MCP tools (run_browser_agent, run_deep_research)
+├── config.py       # Pydantic settings - all MCP_* env vars parsed here
+├── providers.py    # LLM factory - get_llm() creates LLM instances for different providers
+├── cli.py          # Typer CLI - mcp-browser-cli entrypoint
+├── exceptions.py   # Custom exceptions (LLMProviderError, BrowserError)
+└── research/       # Deep research subsystem
+    ├── models.py   # ResearchSource, SearchResult dataclasses
+    ├── machine.py  # ResearchMachine - executes research workflow with progress tracking
+    └── prompts.py  # Prompt templates for research queries
+```
+
+**Key Patterns:**
+- `server.py` uses FastMCP decorator `@server.tool(task=TaskConfig(mode="optional"))` to expose MCP tools with optional background execution
+- Config uses `pydantic_settings` with env var prefixes: `MCP_LLM_*`, `MCP_BROWSER_*`, `MCP_AGENT_TOOL_*`
+- API key resolution: Standard env vars (e.g., `OPENAI_API_KEY`) take priority over `MCP_LLM_*` prefixed ones
+- Background tasks use FastMCP's native task protocol with Progress dependency for status updates
+- Tests use FastMCP's `Client` class for in-memory testing
+
+## Development Rules
+
+### Package Management
+- ONLY use uv, NEVER pip
+- Install: `uv add package`
+- Dev install: `uv add --dev package`
+- FORBIDDEN: `uv pip install`, `@latest` syntax
+
+### Code Quality
+- Type hints required for all code
+- Public APIs must have docstrings
+- Line length: 150 chars maximum
+- Async testing: use anyio, not asyncio
+
+### Testing
+- Framework: pytest with pytest-asyncio
+- MCP tools tested via FastMCP's `Client` class for in-memory testing
+- New features require tests
+- Bug fixes require regression tests
+
+### CI Fix Order
+1. Formatting (`uv run ruff format .`)
+2. Type errors (`uv run pyright`)
+3. Linting (`uv run ruff check .`)
+
+## API Key Configuration
+
+Standard env vars take priority (for compatibility with other tools):
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, etc.
+- Fallback: `MCP_LLM_<PROVIDER>_API_KEY` (e.g., `MCP_LLM_OPENAI_API_KEY`)
+- Generic override: `MCP_LLM_API_KEY` takes highest priority
+
+Providers without API keys: `ollama`, `bedrock` (uses AWS credentials)
+
+## Server Transport Configuration
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `MCP_SERVER_TRANSPORT` | `stdio` | Transport type: `stdio`, `streamable-http`, or `sse` |
+| `MCP_SERVER_HOST` | `127.0.0.1` | Host for HTTP transports |
+| `MCP_SERVER_PORT` | `8000` | Port for HTTP transports |
+
+**Connecting Claude Code to HTTP server:**
+
+```json
+{
+  "mcpServers": {
+    "browser-use": {
+      "type": "streamable-http",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```

@@ -1,15 +1,13 @@
-"""Research state machine for executing deep research tasks."""
+"""Research state machine for executing deep research tasks with progress tracking."""
 
-import asyncio
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from browser_use import Agent, BrowserProfile
 
-from .models import ResearchSource, ResearchState, ResearchTask, SearchResult
+from .models import ResearchSource, SearchResult
 from .prompts import (
     PLANNING_SYSTEM_PROMPT,
     SYNTHESIS_SYSTEM_PROMPT,
@@ -19,88 +17,82 @@ from .prompts import (
 
 if TYPE_CHECKING:
     from browser_use.llm.base import BaseChatModel
+    from fastmcp.dependencies import Progress
 
 logger = logging.getLogger(__name__)
 
 
 class ResearchMachine:
-    """Custom state machine for deep research workflow."""
+    """Research workflow with native MCP progress reporting."""
 
     def __init__(
         self,
-        task: ResearchTask,
+        topic: str,
+        max_searches: int,
+        save_path: Optional[str],
         llm: "BaseChatModel",
         browser_profile: BrowserProfile,
+        progress: Optional["Progress"] = None,
     ):
-        self.task = task
+        self.topic = topic
+        self.max_searches = max_searches
+        self.save_path = save_path
         self.llm = llm
         self.browser_profile = browser_profile
+        self.progress = progress
+        self.search_results: list[SearchResult] = []
 
-    async def run(self) -> None:
-        """Execute the research state machine."""
-        try:
-            # Initialize cancel event
-            self.task._cancel_event = asyncio.Event()
+    async def _report_progress(self, message: Optional[str] = None, increment: bool = False, total: Optional[int] = None) -> None:
+        """Report progress if progress tracker is available."""
+        if not self.progress:
+            return
+        if total is not None:
+            await self.progress.set_total(total)
+        if message:
+            await self.progress.set_message(message)
+        if increment:
+            await self.progress.increment()
 
-            # PLANNING
-            self.task.state = ResearchState.PLANNING
-            self.task.progress.current_action = "Generating search queries"
-            logger.info(f"[{self.task.id}] Planning: Generating queries for '{self.task.topic}'")
+    async def run(self) -> str:
+        """Execute the research workflow and return the report."""
+        # Total steps: planning (1) + searches (max_searches) + synthesis (1)
+        total_steps = self.max_searches + 2
+        await self._report_progress(total=total_steps)
 
-            queries = await self._generate_queries()
-            if not queries:
-                raise ValueError("Failed to generate search queries")
+        # Phase 1: Planning
+        await self._report_progress(message="Planning research approach...")
+        logger.info(f"Planning: Generating queries for '{self.topic}'")
 
-            logger.info(f"[{self.task.id}] Generated {len(queries)} queries")
+        queries = await self._generate_queries()
+        if not queries:
+            raise ValueError("Failed to generate search queries")
 
-            # EXECUTING
-            self.task.state = ResearchState.EXECUTING
-            self.task.progress.total_steps = len(queries)
+        logger.info(f"Generated {len(queries)} queries")
+        await self._report_progress(increment=True)
 
-            for i, query in enumerate(queries):
-                if self.task._cancel_event and self.task._cancel_event.is_set():
-                    self.task.state = ResearchState.CANCELLED
-                    logger.info(f"[{self.task.id}] Cancelled during execution")
-                    return
+        # Phase 2: Executing searches
+        for i, query in enumerate(queries):
+            await self._report_progress(message=f"Searching ({i + 1}/{len(queries)}): {query}")
+            logger.info(f"Executing search {i + 1}/{len(queries)}: {query}")
 
-                self.task.progress.current_step = i + 1
-                self.task.progress.current_action = f"Searching: {query}"
-                logger.info(f"[{self.task.id}] Executing search {i + 1}/{len(queries)}: {query}")
+            result = await self._execute_search(query)
+            self.search_results.append(result)
+            await self._report_progress(increment=True)
 
-                result = await self._execute_search(query)
-                self.task.search_results.append(result)
+        # Phase 3: Synthesizing
+        await self._report_progress(message="Synthesizing findings into report...")
+        logger.info("Synthesizing report")
 
-            # SYNTHESIZING
-            if self.task._cancel_event and self.task._cancel_event.is_set():
-                self.task.state = ResearchState.CANCELLED
-                return
+        report = await self._synthesize_report()
 
-            self.task.state = ResearchState.SYNTHESIZING
-            self.task.progress.current_action = "Synthesizing report"
-            logger.info(f"[{self.task.id}] Synthesizing report")
+        # Save report if path specified
+        if self.save_path:
+            await self._save_report(report)
 
-            self.task.report = await self._synthesize_report()
+        await self._report_progress(increment=True)
+        logger.info("Research completed")
 
-            # Save report if path specified
-            if self.task.save_path:
-                await self._save_report()
-
-            # COMPLETED
-            self.task.state = ResearchState.COMPLETED
-            self.task.completed_at = datetime.now()
-            logger.info(f"[{self.task.id}] Research completed")
-
-        except Exception as e:
-            self.task.state = ResearchState.FAILED
-            self.task.error = str(e)
-            logger.error(f"[{self.task.id}] Research failed: {e}")
-            raise
-
-    async def cancel(self) -> None:
-        """Request cancellation of the research task."""
-        if self.task._cancel_event:
-            self.task._cancel_event.set()
-            logger.info(f"[{self.task.id}] Cancellation requested")
+        return report
 
     async def _generate_queries(self) -> list[str]:
         """Use LLM to generate search queries from the topic."""
@@ -108,7 +100,7 @@ class ResearchMachine:
 
         messages = [
             SystemMessage(content=PLANNING_SYSTEM_PROMPT),
-            UserMessage(content=get_planning_prompt(self.task.topic, self.task.max_searches)),
+            UserMessage(content=get_planning_prompt(self.topic, self.max_searches)),
         ]
 
         response = await self.llm.ainvoke(messages)
@@ -124,13 +116,13 @@ class ResearchMachine:
 
             queries = json.loads(content)
             if isinstance(queries, list):
-                return queries[: self.task.max_searches]
+                return queries[: self.max_searches]
         except json.JSONDecodeError:
             logger.warning(f"Failed to parse JSON from LLM response: {content[:200]}")
 
         # Fallback: split by newlines and clean up
         lines = [line.strip().strip("-").strip("*").strip('"').strip() for line in content.split("\n") if line.strip()]
-        return [line for line in lines if len(line) > 10][: self.task.max_searches]
+        return [line for line in lines if len(line) > 10][: self.max_searches]
 
     async def _execute_search(self, query: str) -> SearchResult:
         """Execute a browser search for a single query."""
@@ -181,29 +173,29 @@ End your response with: DONE"""
         from browser_use.llm.messages import SystemMessage, UserMessage
 
         # Collect findings and sources
-        findings = [r.summary for r in self.task.search_results if r.summary]
-        sources = [{"title": r.source.title, "url": r.source.url, "summary": r.source.summary} for r in self.task.search_results if r.source]
+        findings = [r.summary for r in self.search_results if r.summary]
+        sources = [{"title": r.source.title, "url": r.source.url, "summary": r.source.summary} for r in self.search_results if r.source]
 
         if not findings:
-            return f"# Research Report: {self.task.topic}\n\nNo findings were gathered during the research process."
+            return f"# Research Report: {self.topic}\n\nNo findings were gathered during the research process."
 
         messages = [
             SystemMessage(content=SYNTHESIS_SYSTEM_PROMPT),
-            UserMessage(content=get_synthesis_prompt(self.task.topic, findings, sources)),
+            UserMessage(content=get_synthesis_prompt(self.topic, findings, sources)),
         ]
 
         response = await self.llm.ainvoke(messages)
         return response.completion
 
-    async def _save_report(self) -> None:
+    async def _save_report(self, report: str) -> None:
         """Save the report to a file."""
-        if not self.task.save_path or not self.task.report:
+        if not self.save_path:
             return
 
         try:
-            path = Path(self.task.save_path)
+            path = Path(self.save_path)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(self.task.report, encoding="utf-8")
-            logger.info(f"[{self.task.id}] Report saved to {self.task.save_path}")
+            path.write_text(report, encoding="utf-8")
+            logger.info(f"Report saved to {self.save_path}")
         except Exception as e:
-            logger.error(f"[{self.task.id}] Failed to save report: {e}")
+            logger.error(f"Failed to save report: {e}")

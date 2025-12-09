@@ -1,6 +1,6 @@
 [project]
 name = "mcp_server_browser_use"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server for browser-use"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,14 +15,19 @@ classifiers = [
 
 dependencies = [
   "browser-use>=0.10.1",
-  "mcp>=1.10.1",
+  "fastmcp @ git+https://github.com/jlowin/fastmcp.git@main",
   "pydantic-settings>=2.0.0",
   "typer>=0.12.0",
+  "uvicorn>=0.30.0",
+  "starlette>=0.38.0",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_server_browser_use"]
@@ -43,6 +48,16 @@ ignore = []
 [tool.ruff]
 line-length = 150
 target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = [
+    "e2e: End-to-end tests requiring real API keys and browser",
+    "integration: Integration tests with mocked LLM but real browser automation",
+    "slow: Tests that take longer to run",
+]
 
 [dependency-groups]
 dev = ["pyright>=1.1.378", "pytest>=8.3.3", "pytest-asyncio>=0.24.0", "ruff>=0.6.9"]

@@ -1,20 +1,10 @@
-"""Deep research module with background execution support."""
+"""Deep research module with native MCP background task support."""
 
-from .models import ResearchProgress, ResearchSource, ResearchState, ResearchTask, SearchResult
-from .store import cancel_task, create_task, delete_task, get_task, list_tasks, start_task
+from .machine import ResearchMachine
+from .models import ResearchSource, SearchResult
 
 __all__ = [
-    # Models
-    "ResearchTask",
-    "ResearchState",
-    "ResearchProgress",
+    "ResearchMachine",
     "ResearchSource",
     "SearchResult",
-    # Store operations
-    "create_task",
-    "get_task",
-    "list_tasks",
-    "delete_task",
-    "start_task",
-    "cancel_task",
 ]
