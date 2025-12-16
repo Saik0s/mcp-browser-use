@@ -1,0 +1,16 @@
+{
+  "$schema": "https://gofastmcp.com/public/schemas/fastmcp.json/v1.json",
+  "source": {
+    "path": "mcp_entrypoint.py",
+    "entrypoint": "mcp"
+  },
+  "environment": {
+    "python": ">=3.11",
+    "project": ".",
+    "editable": ["."]
+  },
+  "deployment": {
+    "transport": "stdio",
+    "log_level": "INFO"
+  }
+}

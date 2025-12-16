@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MCP server exposing browser-use as tools for AI-driven browser automation. Implements the Model Context Protocol for natural language browser control and web research.
+MCP server exposing browser-use as tools for AI-driven browser automation. HTTP-only server (stdio deprecated due to timeout issues with long-running browser tasks).
 
 ## Common Commands
 
@@ -12,73 +12,86 @@ MCP server exposing browser-use as tools for AI-driven browser automation. Imple
 # Install dependencies
 uv sync --dev
 
-# Install Playwright browsers (required for automation)
+# Install Playwright browsers
 uv run playwright install
 
-# Run MCP server (stdio - default)
-uv run mcp-server-browser-use
+# Start HTTP server (background daemon)
+mcp-server-browser-use server
 
-# Run MCP server (HTTP - stateful)
-MCP_SERVER_TRANSPORT=streamable-http MCP_SERVER_PORT=8000 uv run mcp-server-browser-use
-# Server runs at http://localhost:8000/mcp
+# Start HTTP server (foreground, for debugging)
+mcp-server-browser-use server -f
 
-# Run MCP server (SSE transport)
-MCP_SERVER_TRANSPORT=sse MCP_SERVER_PORT=8000 uv run mcp-server-browser-use
+# Server management
+mcp-server-browser-use status
+mcp-server-browser-use stop
+mcp-server-browser-use logs -f
 
-# Run CLI
-uv run mcp-browser-cli -e .env run-browser-agent "Go to example.com"
-uv run mcp-browser-cli -e .env run-deep-research "Research topic"
+# List available MCP tools
+mcp-server-browser-use tools
+
+# Call MCP tools directly from CLI
+mcp-server-browser-use call skill_list
+mcp-server-browser-use call run_browser_agent task="Go to google.com"
+
+# Observability
+mcp-server-browser-use tasks                    # List recent tasks
+mcp-server-browser-use tasks --status running   # Filter by status
+mcp-server-browser-use task <id>                # Task details
+mcp-server-browser-use health                   # Server health + stats
 
 # Testing
 uv run pytest                           # Run all tests
 uv run pytest tests/test_mcp_tools.py   # Run specific test file
 uv run pytest -k "test_name"            # Run single test by name
-uv run pytest -v --tb=short             # Verbose with short traceback
 
 # Code quality
 uv run ruff format .                    # Format code
 uv run ruff check .                     # Lint check
-uv run ruff check . --fix               # Auto-fix lint issues
 uv run pyright                          # Type checking
-
-# Debug with MCP Inspector
-npx @modelcontextprotocol/inspector@latest \
-  -e MCP_LLM_PROVIDER=google \
-  -e MCP_LLM_MODEL_NAME=gemini-2.5-flash-preview-04-17 \
-  -e GOOGLE_API_KEY=$GOOGLE_API_KEY \
-  uv --directory . run mcp-server-browser-use
 ```
 
 ## Architecture
 
 ```
 src/mcp_server_browser_use/
-├── server.py       # FastMCP server - defines MCP tools (run_browser_agent, run_deep_research, skill_*)
-├── config.py       # Pydantic settings - all MCP_* env vars parsed here
-├── providers.py    # LLM factory - get_llm() creates LLM instances for different providers
-├── cli.py          # Typer CLI - mcp-browser-cli entrypoint
-├── exceptions.py   # Custom exceptions (LLMProviderError, BrowserError)
-├── research/       # Deep research subsystem
-│   ├── models.py   # ResearchSource, SearchResult dataclasses
-│   ├── machine.py  # ResearchMachine - executes research workflow with progress tracking
-│   └── prompts.py  # Prompt templates for research queries
-└── skills/         # Skills learning and replay subsystem
-    ├── __init__.py # Public API exports
-    ├── models.py   # Skill, MoneyRequest, SessionRecording dataclasses
-    ├── store.py    # SkillStore - YAML persistence (~/.config/browser-skills/)
-    ├── executor.py # SkillExecutor - hint injection + learning mode instructions
-    ├── analyzer.py # SkillAnalyzer - LLM extraction of money request from recording
-    ├── recorder.py # SkillRecorder - CDP network event capture during learning
-    └── prompts.py  # API discovery and analysis prompts
+├── server.py         # FastMCP server - MCP tools (run_browser_agent, run_deep_research, skill_*, health_check, task_*)
+├── config.py         # Pydantic settings - MCP_* env vars
+├── providers.py      # LLM factory - get_llm() for different providers
+├── cli.py            # Typer CLI - server management + MCP client commands + observability
+├── observability/    # Task tracking and health monitoring
+│   ├── models.py     # TaskRecord, TaskStatus, TaskStage dataclasses
+│   ├── store.py      # TaskStore - SQLite persistence (~/.config/mcp-server-browser-use/tasks.db)
+│   └── logging.py    # structlog + contextvars for per-task logging
+├── research/         # Deep research subsystem
+│   ├── models.py     # ResearchSource, SearchResult
+│   ├── machine.py    # ResearchMachine - research workflow
+│   └── prompts.py    # Research prompt templates
+└── skills/           # Skills learning and direct execution
+    ├── models.py     # Skill, SkillRequest, AuthRecovery dataclasses
+    ├── store.py      # SkillStore - YAML persistence (~/.config/browser-skills/)
+    ├── runner.py     # SkillRunner - direct fetch() execution via CDP
+    ├── executor.py   # SkillExecutor - hint injection for agent mode
+    ├── analyzer.py   # SkillAnalyzer - LLM extraction from recordings
+    ├── recorder.py   # SkillRecorder - CDP network capture
+    └── prompts.py    # Analysis prompts
 ```
 
 **Key Patterns:**
-- `server.py` uses FastMCP decorator `@server.tool(task=TaskConfig(mode="optional"))` to expose MCP tools with optional background execution
-- Config uses `pydantic_settings` with env var prefixes: `MCP_LLM_*`, `MCP_BROWSER_*`, `MCP_AGENT_TOOL_*`
-- API key resolution: Standard env vars (e.g., `OPENAI_API_KEY`) take priority over `MCP_LLM_*` prefixed ones
-- Background tasks use FastMCP's native task protocol with Progress dependency for status updates
-- Tests use FastMCP's `Client` class for in-memory testing
-- Skills use CDP network recording via `browser_session.cdp_client` for API discovery during learning mode
+- `server.py`: FastMCP with `@server.tool()` decorator, stdio deprecated (exits with migration message)
+- `cli.py`: Typer app with `tools` and `call` commands that connect to running server via FastMCP Client
+- `runner.py`: Direct skill execution via CDP `Runtime.evaluate` with `session_id` (bypasses browser-use watchdogs)
+- `store.py` (observability): SQLite with aiosqlite for async task persistence
+- Config: `pydantic_settings` with env var prefixes `MCP_LLM_*`, `MCP_BROWSER_*`
+- Tests: FastMCP's `Client` class for in-memory testing
+
+**Skills Two Execution Modes:**
+1. **Direct execution** (~2s): If `skill.request` exists, SkillRunner executes fetch() via CDP
+2. **Agent execution** (~60-120s): Falls back to browser-use agent with hints
+
+**Observability:**
+- All `run_browser_agent` and `run_deep_research` calls track task lifecycle in SQLite
+- MCP tools: `health_check`, `task_list`, `task_get` for introspection
+- CLI commands: `tasks`, `task <id>`, `health` for local visibility
 
 ## Development Rules
 
@@ -86,44 +99,36 @@ src/mcp_server_browser_use/
 - ONLY use uv, NEVER pip
 - Install: `uv add package`
 - Dev install: `uv add --dev package`
-- FORBIDDEN: `uv pip install`, `@latest` syntax
 
 ### Code Quality
-- Type hints required for all code
-- Public APIs must have docstrings
-- Line length: 150 chars maximum
-- Async testing: use anyio, not asyncio
-
-### Testing
-- Framework: pytest with pytest-asyncio
-- MCP tools tested via FastMCP's `Client` class for in-memory testing
-- New features require tests
-- Bug fixes require regression tests
+- Type hints required
+- Public APIs need docstrings
+- Line length: 150 chars max
+- Async testing: use anyio
 
 ### CI Fix Order
-1. Formatting (`uv run ruff format .`)
-2. Type errors (`uv run pyright`)
-3. Linting (`uv run ruff check .`)
+1. `uv run ruff format .`
+2. `uv run pyright`
+3. `uv run ruff check .`
 
-## API Key Configuration
+## API Keys
 
-Standard env vars take priority (for compatibility with other tools):
-- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, etc.
-- Fallback: `MCP_LLM_<PROVIDER>_API_KEY` (e.g., `MCP_LLM_OPENAI_API_KEY`)
-- Generic override: `MCP_LLM_API_KEY` takes highest priority
+Standard env vars take priority:
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`
+- Fallback: `MCP_LLM_<PROVIDER>_API_KEY`
 
-Providers without API keys: `ollama`, `bedrock` (uses AWS credentials)
+## Server Configuration
 
-## Server Transport Configuration
+Server runs HTTP only. Default: `http://localhost:8000/mcp`
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `MCP_SERVER_TRANSPORT` | `stdio` | Transport type: `stdio`, `streamable-http`, or `sse` |
-| `MCP_SERVER_HOST` | `127.0.0.1` | Host for HTTP transports |
-| `MCP_SERVER_PORT` | `8000` | Port for HTTP transports |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_SERVER_HOST` | `127.0.0.1` | Host |
+| `MCP_SERVER_PORT` | `8000` | Port |
+| `MCP_LLM_PROVIDER` | `anthropic` | LLM provider |
+| `MCP_BROWSER_HEADLESS` | `true` | Headless mode |
 
-**Connecting Claude Code to HTTP server:**
-
+**Claude Desktop config:**
 ```json
 {
   "mcpServers": {

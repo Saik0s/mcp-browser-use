@@ -29,25 +29,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Headers that should be redacted for security
-SENSITIVE_HEADERS = frozenset({
-    "authorization",
-    "cookie",
-    "set-cookie",
-    "x-csrf-token",
-    "x-xsrf-token",
-    "x-api-key",
-    "api-key",
-    "x-auth-token",
-    "x-access-token",
-})
+SENSITIVE_HEADERS = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-csrf-token",
+        "x-xsrf-token",
+        "x-api-key",
+        "api-key",
+        "x-auth-token",
+        "x-access-token",
+    }
+)
 
 # Content types that indicate JSON API responses
-JSON_CONTENT_TYPES = frozenset({
-    "application/json",
-    "application/graphql-response+json",
-    "application/vnd.api+json",
-    "text/json",
-})
+JSON_CONTENT_TYPES = frozenset(
+    {
+        "application/json",
+        "application/graphql-response+json",
+        "application/vnd.api+json",
+        "text/json",
+    }
+)
 
 # Maximum body size to capture (128KB)
 MAX_BODY_SIZE = 128 * 1024
@@ -251,9 +255,7 @@ class SkillRecorder:
         except Exception as e:
             logger.debug(f"Error recording CDP loading failure: {e}")
 
-    async def _capture_body_cdp(
-        self, request_id: str, network_response: NetworkResponse, session_id: Optional[str]
-    ) -> None:
+    async def _capture_body_cdp(self, request_id: str, network_response: NetworkResponse, session_id: Optional[str]) -> None:
         """Capture response body via CDP Network.getResponseBody.
 
         Args:

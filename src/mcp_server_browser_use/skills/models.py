@@ -3,11 +3,16 @@
 Skills are MACHINE-GENERATED from learning sessions, not manually authored.
 The agent discovers API endpoints during learning mode, and the analyzer
 extracts the "money request" (the API call that returns the desired data).
+
+Execution uses browser's fetch() via CDP for:
+- Automatic cookie/session handling
+- No CORS issues (request from page context)
+- Preserved auth state
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 # --- Recording Models (captured during learning) ---
 
@@ -71,6 +76,8 @@ class MoneyRequest:
 
     This is identified by the analyzer as THE request that contains
     the data the user asked for.
+
+    DEPRECATED: Use SkillRequest for new skills. Kept for backward compatibility.
     """
 
     endpoint: str  # URL path (without domain)
@@ -80,6 +87,87 @@ class MoneyRequest:
     response_path: Optional[str] = None  # JSONPath to the data in response (e.g., "data.jobs")
     identifies_by: Optional[str] = None  # How to identify this request (e.g., "operationName: searchJobs")
     sample_response_schema: Optional[dict] = None  # Simplified schema of expected response
+
+
+# --- Direct Execution Models (new architecture) ---
+
+
+@dataclass
+class SkillRequest:
+    """Complete request specification for direct browser execution.
+
+    Contains everything needed to execute fetch() from within the browser:
+    - Full URL with parameter placeholders
+    - Method, headers, body template
+    - Response parsing configuration
+    """
+
+    # Request details
+    url: str  # Full URL with {param} placeholders, e.g., "https://npmjs.com/search?q={query}"
+    method: str = "GET"
+    headers: dict[str, str] = field(default_factory=dict)  # Headers to send (non-sensitive)
+    body_template: Optional[str] = None  # Request body template with {param} placeholders
+
+    # Response handling
+    response_type: Literal["json", "html", "text"] = "json"
+    extract_path: Optional[str] = None  # For JSON: JSONPath like "data.items" or "objects[*].package"
+
+    # For HTML responses - CSS selectors
+    html_selectors: Optional[dict[str, str]] = None  # {"items": ".result-item", "title": "h3 a", ...}
+
+    def build_url(self, params: dict[str, Any]) -> str:
+        """Build URL by substituting parameter placeholders."""
+        url = self.url
+        for key, value in params.items():
+            url = url.replace(f"{{{key}}}", str(value))
+        return url
+
+    def build_body(self, params: dict[str, Any]) -> Optional[str]:
+        """Build request body by substituting parameter placeholders."""
+        if not self.body_template:
+            return None
+        body = self.body_template
+        for key, value in params.items():
+            body = body.replace(f"{{{key}}}", str(value))
+        return body
+
+    def to_fetch_options(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Generate JavaScript fetch() options."""
+        options: dict[str, Any] = {
+            "method": self.method,
+            "credentials": "include",  # Always include cookies
+        }
+
+        if self.headers:
+            options["headers"] = self.headers
+
+        body = self.build_body(params)
+        if body:
+            options["body"] = body
+
+        return options
+
+
+@dataclass
+class AuthRecovery:
+    """Configuration for handling authentication failures.
+
+    When a skill request returns 401/403, the runner can:
+    1. Navigate to the recovery page
+    2. Let the agent re-authenticate
+    3. Retry the original request
+    """
+
+    # When to trigger recovery
+    trigger_on_status: list[int] = field(default_factory=lambda: [401, 403])
+    trigger_on_body: Optional[str] = None  # Text in response body that indicates auth failure
+
+    # Recovery action
+    recovery_page: str = ""  # URL to navigate to for re-auth (e.g., login page)
+    success_indicator: Optional[str] = None  # How to know auth succeeded (e.g., "cookie:session present")
+
+    # Limits
+    max_retries: int = 1
 
 
 @dataclass
@@ -152,13 +240,21 @@ class Skill:
     1. User runs run_browser_agent with learn=True
     2. Agent successfully completes the task by discovering an API
     3. Analyzer identifies the "money request" and extracts parameters
+
+    Two execution modes:
+    - Direct execution (new): Use `request` field, execute fetch() via CDP
+    - Hint-based (legacy): Use `hints` field, agent navigates with guidance
     """
 
     name: str
     description: str
     original_task: str  # The task that created this skill
 
-    # Machine-generated from recording analysis
+    # NEW: Direct execution configuration
+    request: Optional[SkillRequest] = None  # If set, use direct fetch() execution
+    auth_recovery: Optional[AuthRecovery] = None  # How to handle auth failures
+
+    # LEGACY: Hint-based execution (agent navigates with guidance)
     hints: SkillHints = field(default_factory=SkillHints)
     parameters: list[SkillParameter] = field(default_factory=list)
 
@@ -171,6 +267,11 @@ class Skill:
     fallback: FallbackConfig = field(default_factory=FallbackConfig)
 
     @property
+    def supports_direct_execution(self) -> bool:
+        """Check if this skill supports fast direct execution."""
+        return self.request is not None
+
+    @property
     def success_rate(self) -> float:
         """Calculate success rate from usage statistics."""
         total = self.success_count + self.failure_count
@@ -178,7 +279,7 @@ class Skill:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert skill to dictionary for serialization."""
-        result = {
+        result: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "original_task": self.original_task,
@@ -198,16 +299,40 @@ class Skill:
                 }
                 for p in self.parameters
             ],
-            "hints": {
-                "navigation": [{"url_pattern": n.url_pattern, "description": n.description, "required": n.required} for n in self.hints.navigation],
-            },
             "fallback": {
                 "strategy": self.fallback.strategy,
                 "max_retries": self.fallback.max_retries,
             },
         }
 
-        # Add money_request if present
+        # NEW: Add request for direct execution
+        if self.request:
+            result["request"] = {
+                "url": self.request.url,
+                "method": self.request.method,
+                "headers": self.request.headers,
+                "body_template": self.request.body_template,
+                "response_type": self.request.response_type,
+                "extract_path": self.request.extract_path,
+                "html_selectors": self.request.html_selectors,
+            }
+
+        # NEW: Add auth_recovery
+        if self.auth_recovery:
+            result["auth_recovery"] = {
+                "trigger_on_status": self.auth_recovery.trigger_on_status,
+                "trigger_on_body": self.auth_recovery.trigger_on_body,
+                "recovery_page": self.auth_recovery.recovery_page,
+                "success_indicator": self.auth_recovery.success_indicator,
+                "max_retries": self.auth_recovery.max_retries,
+            }
+
+        # LEGACY: Add hints for backward compatibility
+        result["hints"] = {
+            "navigation": [{"url_pattern": n.url_pattern, "description": n.description, "required": n.required} for n in self.hints.navigation],
+        }
+
+        # Add money_request if present (legacy)
         if self.hints.money_request:
             mr = self.hints.money_request
             result["hints"]["money_request"] = {
@@ -238,7 +363,33 @@ class Skill:
             for p in data.get("parameters", [])
         ]
 
-        # Parse hints
+        # NEW: Parse request for direct execution
+        request = None
+        req_data = data.get("request")
+        if req_data:
+            request = SkillRequest(
+                url=req_data["url"],
+                method=req_data.get("method", "GET"),
+                headers=req_data.get("headers", {}),
+                body_template=req_data.get("body_template"),
+                response_type=req_data.get("response_type", "json"),
+                extract_path=req_data.get("extract_path"),
+                html_selectors=req_data.get("html_selectors"),
+            )
+
+        # NEW: Parse auth_recovery
+        auth_recovery = None
+        auth_data = data.get("auth_recovery")
+        if auth_data:
+            auth_recovery = AuthRecovery(
+                trigger_on_status=auth_data.get("trigger_on_status", [401, 403]),
+                trigger_on_body=auth_data.get("trigger_on_body"),
+                recovery_page=auth_data.get("recovery_page", ""),
+                success_indicator=auth_data.get("success_indicator"),
+                max_retries=auth_data.get("max_retries", 1),
+            )
+
+        # LEGACY: Parse hints
         hints_data = data.get("hints", {})
 
         # Parse navigation steps
@@ -251,7 +402,7 @@ class Skill:
             for n in hints_data.get("navigation", [])
         ]
 
-        # Parse money_request
+        # Parse money_request (legacy)
         money_request = None
         mr_data = hints_data.get("money_request")
         if mr_data:
@@ -295,6 +446,8 @@ class Skill:
             success_count=data.get("success_count", 0),
             failure_count=data.get("failure_count", 0),
             parameters=parameters,
+            request=request,
+            auth_recovery=auth_recovery,
             hints=hints,
             fallback=fallback,
         )

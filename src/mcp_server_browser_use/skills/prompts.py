@@ -46,33 +46,42 @@ If you cannot find an API (data is rendered server-side with no API):
 ANALYSIS_SYSTEM_PROMPT = """You are a browser automation expert analyzing network traffic to extract reusable skills.
 
 Your task is to identify the "money request" - the single API call that returns the data the user asked for.
+This request will be executed DIRECTLY via browser fetch() for fast skill replay.
 
 A good money request:
 - Returns JSON data that matches what the user asked for
 - Is a single endpoint (not multiple calls)
-- Has clear parameters that can be templated
-- Returns structured data (not HTML)
+- Has clear parameters that can be templated (use {param_name} placeholders)
+- Returns structured data (JSON preferred, HTML accepted)
 
 Output a JSON object with:
 {
     "success": true/false,
     "reason": "Why this succeeded or failed",
-    "money_request": {
-        "endpoint": "/api/path",
+    "request": {
+        "url": "Full URL with {param} placeholders, e.g., https://npmjs.com/search?q={query}",
         "method": "GET or POST",
-        "content_type": "application/json",
-        "identifies_by": "How to identify this request (e.g., operationName, URL pattern)",
-        "response_path": "JSONPath to the data (e.g., data.jobs.edges)",
-        "parameters": [
-            {"name": "param_name", "source": "url|body|query", "required": true/false}
-        ]
+        "headers": {"Content-Type": "application/json"},  // Only include essential headers
+        "body_template": "Request body with {param} placeholders (for POST)",
+        "response_type": "json or html or text",
+        "extract_path": "JSONPath to extract data, e.g., objects[*].package.name"
     },
-    "navigation_steps": [
-        {"url_pattern": "example.com/path", "description": "What this page is"}
+    "parameters": [
+        {"name": "query", "source": "url|body|query", "required": true, "default": null}
     ],
+    "auth_recovery": {
+        "trigger_on_status": [401, 403],
+        "recovery_page": "URL to navigate if auth fails (e.g., login page)"
+    },
     "skill_name_suggestion": "suggested-skill-name",
     "skill_description": "What this skill does"
 }
+
+IMPORTANT:
+- The "url" must be the FULL URL including domain (https://...)
+- Use {param_name} placeholders for values that change between invocations
+- The extract_path uses simple dot notation: "data.items" or "objects[*].name" for arrays
+- If authentication might expire, include auth_recovery with the login page URL
 
 If no suitable API was found, return:
 {
@@ -97,10 +106,10 @@ def get_analysis_prompt(task: str, result: str, api_calls: list[dict]) -> str:
     api_calls_text = ""
     for i, call in enumerate(api_calls, 1):
         api_calls_text += f"""
-{i}. {call['method']} {call['url']}
-   Status: {call['status']}
-   Content-Type: {call['content_type']}
-   Has Response Body: {call['has_body']}
+{i}. {call["method"]} {call["url"]}
+   Status: {call["status"]}
+   Content-Type: {call["content_type"]}
+   Has Response Body: {call["has_body"]}
 """
         if call.get("post_data"):
             api_calls_text += f"   Request Body: {call['post_data'][:500]}...\n"
@@ -127,6 +136,7 @@ Return your analysis as JSON.
 
 # --- Hint Injection Prompt ---
 # This is PREPENDED to the user's task when executing with a skill
+
 
 def get_execution_hints(skill_name: str, hints_text: str) -> str:
     """Generate execution hints from a skill.

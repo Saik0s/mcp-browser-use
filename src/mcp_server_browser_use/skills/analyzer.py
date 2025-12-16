@@ -8,11 +8,11 @@ import json
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from .models import FallbackConfig, MoneyRequest, NavigationStep, SessionRecording, Skill, SkillHints, SkillParameter
+from .models import AuthRecovery, FallbackConfig, MoneyRequest, NavigationStep, SessionRecording, Skill, SkillHints, SkillParameter, SkillRequest
 from .prompts import ANALYSIS_SYSTEM_PROMPT, get_analysis_prompt
 
 if TYPE_CHECKING:
-    from langchain_core.language_models.chat_models import BaseChatModel
+    from browser_use.llm.base import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +68,12 @@ class SkillAnalyzer:
 
         # Call LLM
         try:
-            from langchain_core.messages import HumanMessage, SystemMessage
+            from browser_use.llm.messages import SystemMessage, UserMessage
 
-            response = await self.llm.ainvoke([SystemMessage(content=ANALYSIS_SYSTEM_PROMPT), HumanMessage(content=prompt)])
+            response = await self.llm.ainvoke([SystemMessage(content=ANALYSIS_SYSTEM_PROMPT), UserMessage(content=prompt)])
 
-            # Parse response
-            result = self._parse_analysis_response(response.content)
+            # Parse response - browser-use returns ChatInvokeCompletion with .completion
+            result = self._parse_analysis_response(response.completion)
 
             if not result or not result.get("success"):
                 reason = result.get("reason", "Unknown") if result else "Failed to parse response"
@@ -125,13 +125,48 @@ class SkillAnalyzer:
             recording: Original recording
 
         Returns:
-            Skill object
+            Skill object with direct execution support if possible
         """
-        money_request_data = analysis.get("money_request", {})
-        navigation_data = analysis.get("navigation_steps", [])
-        parameters_data = money_request_data.get("parameters", [])
+        # NEW: Build SkillRequest for direct execution
+        request_data = analysis.get("request", {})
+        skill_request = None
+        if request_data.get("url"):
+            skill_request = SkillRequest(
+                url=request_data.get("url", ""),
+                method=request_data.get("method", "GET"),
+                headers=request_data.get("headers", {}),
+                body_template=request_data.get("body_template"),
+                response_type=request_data.get("response_type", "json"),
+                extract_path=request_data.get("extract_path"),
+                html_selectors=request_data.get("html_selectors"),
+            )
+            logger.info(f"Built SkillRequest for direct execution: {skill_request.url}")
 
-        # Build money request
+        # NEW: Build AuthRecovery if provided
+        auth_data = analysis.get("auth_recovery", {})
+        auth_recovery = None
+        if auth_data.get("recovery_page"):
+            auth_recovery = AuthRecovery(
+                trigger_on_status=auth_data.get("trigger_on_status", [401, 403]),
+                trigger_on_body=auth_data.get("trigger_on_body"),
+                recovery_page=auth_data.get("recovery_page", ""),
+                success_indicator=auth_data.get("success_indicator"),
+            )
+
+        # Build parameters from top-level or nested in request
+        parameters_data = analysis.get("parameters", [])
+        parameters = [
+            SkillParameter(
+                name=p.get("name", ""),
+                source=p.get("source", "query"),
+                required=p.get("required", False),
+                default=p.get("default"),
+            )
+            for p in parameters_data
+        ]
+
+        # LEGACY: Build money_request for backward compatibility
+        money_request_data = analysis.get("money_request", {})
         money_request = None
         if money_request_data.get("endpoint"):
             money_request = MoneyRequest(
@@ -142,20 +177,11 @@ class SkillAnalyzer:
                 identifies_by=money_request_data.get("identifies_by"),
             )
 
-        # Build navigation steps
+        # LEGACY: Build navigation steps
+        navigation_data = analysis.get("navigation_steps", [])
         navigation = [NavigationStep(url_pattern=n.get("url_pattern", ""), description=n.get("description", "")) for n in navigation_data]
 
-        # Build parameters
-        parameters = [
-            SkillParameter(
-                name=p.get("name", ""),
-                source=p.get("source", "query"),
-                required=p.get("required", False),
-            )
-            for p in parameters_data
-        ]
-
-        # Build hints
+        # Build hints (legacy)
         hints = SkillHints(navigation=navigation, money_request=money_request)
 
         # Generate skill name if not provided
@@ -168,6 +194,8 @@ class SkillAnalyzer:
             name=skill_name,
             description=analysis.get("skill_description", recording.task),
             original_task=recording.task,
+            request=skill_request,  # NEW: Direct execution
+            auth_recovery=auth_recovery,  # NEW: Auth recovery
             hints=hints,
             parameters=parameters,
             fallback=FallbackConfig(),

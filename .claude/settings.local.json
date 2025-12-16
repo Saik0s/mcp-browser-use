@@ -3,5 +3,6 @@
     "additionalDirectories": [
       "/Users/igortarasenko/Projects/browser-use/"
     ]
-  }
+  },
+  "outputStyle": "Orchestrator"
 }

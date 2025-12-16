@@ -1,10 +1,62 @@
-"""Configuration management using Pydantic settings."""
+"""Configuration management using Pydantic settings with optional file persistence."""
 
+import json
 import os
-from typing import Literal, Optional
+from pathlib import Path
+from typing import Any, Literal, Optional
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# --- Paths ---
+
+APP_NAME = "mcp-server-browser-use"
+
+
+def get_config_dir() -> Path:
+    """Get the configuration directory (e.g. ~/.config/mcp-server-browser-use)."""
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA", Path.home() / ".config")).expanduser()
+    else:
+        base = Path("~/.config").expanduser()
+
+    path = base / APP_NAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_default_results_dir() -> Path:
+    """Get the default directory for saving results."""
+    base = Path("~/Documents").expanduser()
+    if not base.exists():
+        base = Path.home()
+
+    path = base / "mcp-browser-results"
+    return path
+
+
+CONFIG_FILE = get_config_dir() / "config.json"
+
+
+def load_config_file() -> dict[str, Any]:
+    """Load settings from the JSON config file if it exists."""
+    if not CONFIG_FILE.exists():
+        return {}
+
+    try:
+        text = CONFIG_FILE.read_text(encoding="utf-8")
+        if not text.strip():
+            return {}
+        return json.loads(text)
+    except Exception:
+        return {}
+
+
+def save_config_file(config_data: dict[str, Any]) -> None:
+    """Save settings to the JSON config file."""
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(config_data, indent=2), encoding="utf-8")
+
 
 # Standard environment variable names for API keys (industry convention)
 # For providers with multiple common env var names, use a list (first match wins)
@@ -126,7 +178,8 @@ class ServerSettings(BaseSettings):
     logging_level: str = Field(default="INFO")
     transport: TransportType = Field(default="stdio", description="MCP transport: stdio, streamable-http, or sse")
     host: str = Field(default="127.0.0.1", description="Host for HTTP transports")
-    port: int = Field(default=8000, description="Port for HTTP transports")
+    port: int = Field(default=8383, description="Port for HTTP transports")
+    results_dir: Optional[str] = Field(default=None, description="Directory to save execution results")
 
 
 class ResearchSettings(BaseSettings):
@@ -139,8 +192,21 @@ class ResearchSettings(BaseSettings):
     search_timeout: int = Field(default=120, description="Timeout per search in seconds")
 
 
+class SkillsSettings(BaseSettings):
+    """Browser skills configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="MCP_SKILLS_")
+
+    enabled: bool = Field(default=True, description="Enable skills feature")
+    directory: Optional[str] = Field(default=None, description="Directory containing skill YAML files (default: ~/.config/browser-skills)")
+    validate_results: bool = Field(default=True, description="Validate execution results against skill success indicators")
+
+
 class AppSettings(BaseSettings):
-    """Root application settings."""
+    """Root application settings.
+
+    Priority: Environment Variables > Config File > Defaults
+    """
 
     model_config = SettingsConfigDict(env_prefix="MCP_", extra="ignore")
 
@@ -149,6 +215,32 @@ class AppSettings(BaseSettings):
     agent: AgentSettings = Field(default_factory=AgentSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
+    skills: SkillsSettings = Field(default_factory=SkillsSettings)
+
+    def save(self) -> Path:
+        """Save current configuration to file (excluding secrets)."""
+        data = self.model_dump(mode="json", exclude_none=True)
+        # Remove secret values from saved config
+        if "llm" in data and "api_key" in data["llm"]:
+            del data["llm"]["api_key"]
+        save_config_file(data)
+        return CONFIG_FILE
+
+    def get_results_dir(self) -> Path:
+        """Get the results directory, creating if needed."""
+        if self.server.results_dir:
+            path = Path(self.server.results_dir).expanduser()
+        else:
+            path = get_default_results_dir()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
 
-settings = AppSettings()
+def _load_settings() -> AppSettings:
+    """Load settings with file config as base, env vars overlay."""
+    file_data = load_config_file()
+    # Pydantic will overlay env vars on top
+    return AppSettings(**file_data)
+
+
+settings = _load_settings()
