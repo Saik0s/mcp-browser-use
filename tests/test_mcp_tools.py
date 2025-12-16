@@ -39,10 +39,18 @@ class TestListTools:
         tools = await client.list_tools()
         tool_names = [tool.name for tool in tools]
 
-        # New FastMCP implementation has only 2 tools
+        # Core browser automation tools
         assert "run_browser_agent" in tool_names
         assert "run_deep_research" in tool_names
-        assert len(tool_names) == 2
+        # Skill management tools (skills are machine-generated via learning, not manually created)
+        assert "skill_list" in tool_names
+        assert "skill_get" in tool_names
+        assert "skill_delete" in tool_names
+        # Observability tools
+        assert "health_check" in tool_names
+        assert "task_list" in tool_names
+        assert "task_get" in tool_names
+        assert len(tool_names) == 8
 
     @pytest.mark.anyio
     async def test_run_browser_agent_tool_schema(self, client: Client):

@@ -3,6 +3,8 @@
 import logging
 import os
 import sys
+import time
+import uuid
 from typing import TYPE_CHECKING, Optional
 
 
@@ -56,9 +58,11 @@ from fastmcp.server.server import TaskConfig
 
 from .config import settings
 from .exceptions import BrowserError, LLMProviderError
+from .observability import TaskRecord, TaskStage, TaskStatus, bind_task_context, clear_task_context, get_task_logger
+from .observability.store import get_task_store
 from .providers import get_llm
 from .research.machine import ResearchMachine
-from .skills import SkillAnalyzer, SkillExecutor, SkillRecorder, SkillStore
+from .skills import SkillAnalyzer, SkillExecutor, SkillRecorder, SkillRunner, SkillStore
 from .utils import save_execution_result
 
 if TYPE_CHECKING:
@@ -131,14 +135,35 @@ def serve() -> FastMCP:
             Result of the browser automation task. In learning mode, includes
             skill extraction status.
         """
+        # --- Task Tracking Setup ---
+        task_id = str(uuid.uuid4())
+        task_store = get_task_store()
+        task_record = TaskRecord(
+            task_id=task_id,
+            tool_name="run_browser_agent",
+            status=TaskStatus.PENDING,
+            input_params={"task": task, "max_steps": max_steps, "skill_name": skill_name, "learn": learn},
+        )
+        await task_store.create_task(task_record)
+        bind_task_context(task_id, "run_browser_agent")
+        task_logger = get_task_logger()
+
         await ctx.info(f"Starting: {task}")
         logger.info(f"Starting browser agent task: {task[:100]}...")
+        task_logger.info("task_created", task_preview=task[:100])
 
         try:
             llm, profile = _get_llm_and_profile()
         except LLMProviderError as e:
             logger.error(f"LLM initialization failed: {e}")
+            await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+            clear_task_context()
             return f"Error: {e}"
+
+        # Mark task as running
+        await task_store.update_status(task_id, TaskStatus.RUNNING)
+        await task_store.update_progress(task_id, 0, 0, "Initializing...", TaskStage.INITIALIZING)
+        task_logger.info("task_running")
 
         # Determine execution mode
         skill = None
@@ -157,7 +182,7 @@ def serve() -> FastMCP:
             logger.info("Learning mode enabled - API discovery instructions injected")
 
         elif skill_name and settings.skills.enabled:
-            # EXECUTION MODE: Load skill and inject hints
+            # EXECUTION MODE: Load skill
             skill = skill_store.load(skill_name)
             if skill:
                 # Parse skill params from JSON string
@@ -165,13 +190,84 @@ def serve() -> FastMCP:
                     import json
 
                     try:
-                        params_dict = json.loads(skill_params)
+                        parsed = json.loads(skill_params)
+                        if isinstance(parsed, dict):
+                            params_dict = parsed
+                        else:
+                            logger.warning(f"skill_params must be an object, got {type(parsed).__name__}")
+                            params_dict = {}
                     except json.JSONDecodeError:
                         logger.warning(f"Invalid skill_params JSON: {skill_params}")
                         params_dict = {}
 
+                # NEW: Try direct execution if skill supports it
+                if skill.supports_direct_execution:
+                    await ctx.info(f"Direct execution: {skill.name}")
+                    logger.info(f"Attempting direct execution for skill: {skill.name}")
+
+                    try:
+                        # Create browser session for fetch execution
+                        from browser_use.browser.session import BrowserSession
+
+                        browser_session = BrowserSession(browser_profile=profile)
+                        await browser_session.start()
+
+                        try:
+                            runner = SkillRunner()
+                            run_result = await runner.run(skill, params_dict, browser_session)
+
+                            if run_result.success:
+                                # Direct execution succeeded!
+                                skill_store.record_usage(skill.name, success=True)
+                                await ctx.info("Direct execution completed")
+                                logger.info(f"Skill direct execution succeeded: {skill.name}")
+
+                                # Format result
+                                import json
+
+                                if isinstance(run_result.data, (dict, list)):
+                                    final_result = json.dumps(run_result.data, indent=2)
+                                else:
+                                    final_result = str(run_result.data)
+
+                                # Auto-save result if configured
+                                if settings.server.results_dir:
+                                    saved_path = save_execution_result(
+                                        final_result,
+                                        prefix=f"skill_{skill.name}",
+                                        metadata={"skill": skill.name, "params": params_dict, "direct": True},
+                                    )
+                                    await ctx.info(f"Saved to: {saved_path.name}")
+
+                                # Mark task as completed before returning
+                                await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final_result)
+                                task_logger.info("task_completed", result_length=len(final_result), direct=True)
+                                clear_task_context()
+                                return final_result
+
+                            elif run_result.auth_recovery_triggered:
+                                # Auth failed - fall back to agent for re-auth
+                                await ctx.info("Auth required, falling back to agent...")
+                                logger.info("Direct execution needs auth recovery, falling back to agent")
+                                # Continue to agent execution below
+
+                            else:
+                                # Direct execution failed - fall back to agent
+                                await ctx.info(f"Direct failed: {run_result.error}, trying agent...")
+                                logger.warning(f"Direct execution failed: {run_result.error}")
+                                # Continue to agent execution below
+
+                        finally:
+                            await browser_session.stop()
+
+                    except Exception as e:
+                        logger.error(f"Direct execution error: {e}")
+                        await ctx.info("Direct execution error, trying agent...")
+                        # Continue to agent execution below
+
+                # Inject hints for agent execution (fallback or non-direct skills)
                 augmented_task = skill_executor.inject_hints(task, skill, params_dict)
-                await ctx.info(f"Using skill: {skill.name}")
+                await ctx.info(f"Using skill hints: {skill.name}")
                 logger.info(f"Skill hints injected for: {skill.name}")
             else:
                 await ctx.info(f"Skill not found: {skill_name}")
@@ -195,6 +291,12 @@ def serve() -> FastMCP:
                 navigation_urls.append(state.url)
                 last_url = state.url
             await progress.increment()
+
+            # Update task store with progress
+            stage = TaskStage.NAVIGATING if state.url else TaskStage.EXTRACTING
+            message = state.title or state.url or f"Step {step_num}"
+            await task_store.update_progress(task_id, step_num, steps, message[:100], stage)
+            task_logger.debug("step_completed", step=step_num, url=state.url)
 
         # Initialize recorder for learning mode
         recorder: SkillRecorder | None = None
@@ -302,7 +404,13 @@ def serve() -> FastMCP:
 
             await ctx.info(f"Completed: {final[:100]}")
             logger.info(f"Agent completed: {final[:100]}...")
-            return final + skill_extraction_result
+
+            # Mark task as completed
+            final_result = final + skill_extraction_result
+            await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final_result)
+            task_logger.info("task_completed", result_length=len(final_result))
+            clear_task_context()
+            return final_result
 
         except Exception as e:
             # Clean up recorder if attached
@@ -315,6 +423,12 @@ def serve() -> FastMCP:
             # Record failure if skill was used
             if skill:
                 skill_store.record_usage(skill.name, success=False)
+
+            # Mark task as failed
+            await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+            task_logger.error("task_failed", error=str(e))
+            clear_task_context()
+
             logger.error(f"Browser agent failed: {e}")
             raise BrowserError(f"Browser automation failed: {e}") from e
 
@@ -340,42 +454,73 @@ def serve() -> FastMCP:
         Returns:
             The research report as markdown
         """
+        # --- Task Tracking Setup ---
+        task_id = str(uuid.uuid4())
+        task_store = get_task_store()
+        task_record = TaskRecord(
+            task_id=task_id,
+            tool_name="run_deep_research",
+            status=TaskStatus.PENDING,
+            input_params={"topic": topic, "max_searches": max_searches, "save_to_file": save_to_file},
+        )
+        await task_store.create_task(task_record)
+        bind_task_context(task_id, "run_deep_research")
+        task_logger = get_task_logger()
+
         logger.info(f"Starting deep research on: {topic}")
+        task_logger.info("task_created", topic=topic[:100])
 
         try:
             llm, profile = _get_llm_and_profile()
         except LLMProviderError as e:
             logger.error(f"LLM initialization failed: {e}")
+            await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+            clear_task_context()
             return f"Error: {e}"
+
+        # Mark task as running
+        await task_store.update_status(task_id, TaskStatus.RUNNING)
+        task_logger.info("task_running")
 
         searches = max_searches if max_searches is not None else settings.research.max_searches
         save_path = save_to_file or (
             f"{settings.research.save_directory}/{topic[:50].replace(' ', '_')}.md" if settings.research.save_directory else None
         )
 
-        # Execute research with progress tracking
-        machine = ResearchMachine(
-            topic=topic,
-            max_searches=searches,
-            save_path=save_path,
-            llm=llm,
-            browser_profile=profile,
-            progress=progress,
-            ctx=ctx,
-        )
-
-        report = await machine.run()
-
-        # Auto-save result if results_dir is configured and no explicit save path
-        if settings.server.results_dir and not save_to_file:
-            saved_path = save_execution_result(
-                report,
-                prefix=f"research_{topic[:20]}",
-                metadata={"topic": topic, "max_searches": searches},
+        try:
+            # Execute research with progress tracking
+            machine = ResearchMachine(
+                topic=topic,
+                max_searches=searches,
+                save_path=save_path,
+                llm=llm,
+                browser_profile=profile,
+                progress=progress,
+                ctx=ctx,
             )
-            await ctx.info(f"Saved to: {saved_path.name}")
 
-        return report
+            report = await machine.run()
+
+            # Auto-save result if results_dir is configured and no explicit save path
+            if settings.server.results_dir and not save_to_file:
+                saved_path = save_execution_result(
+                    report,
+                    prefix=f"research_{topic[:20]}",
+                    metadata={"topic": topic, "max_searches": searches},
+                )
+                await ctx.info(f"Saved to: {saved_path.name}")
+
+            # Mark task as completed
+            await task_store.update_status(task_id, TaskStatus.COMPLETED, result=report)
+            task_logger.info("task_completed", result_length=len(report))
+            clear_task_context()
+            return report
+
+        except Exception as e:
+            await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+            task_logger.error("task_failed", error=str(e))
+            clear_task_context()
+            raise
 
     # --- Skill Management Tools ---
 
@@ -444,22 +589,212 @@ def serve() -> FastMCP:
             return f"Skill '{skill_name}' deleted successfully"
         return f"Error: Skill '{skill_name}' not found"
 
+    # --- Observability Tools ---
+
+    @server.tool()
+    async def health_check() -> str:
+        """
+        Health check endpoint with system stats and running task information.
+
+        Returns:
+            JSON object with server health status, running tasks, and statistics
+        """
+        import json
+
+        import psutil
+
+        task_store = get_task_store()
+        running_tasks = await task_store.get_running_tasks()
+        stats = await task_store.get_stats()
+
+        # Get process stats
+        process = psutil.Process()
+        memory_info = process.memory_info()
+
+        return json.dumps(
+            {
+                "status": "healthy",
+                "uptime_seconds": round(time.time() - _server_start_time, 1),
+                "memory_mb": round(memory_info.rss / 1024 / 1024, 1),
+                "running_tasks": len(running_tasks),
+                "tasks": [
+                    {
+                        "task_id": t.task_id[:8],
+                        "tool": t.tool_name,
+                        "stage": t.stage.value if t.stage else None,
+                        "progress": f"{t.progress_current}/{t.progress_total}",
+                        "message": t.progress_message,
+                    }
+                    for t in running_tasks
+                ],
+                "stats": stats,
+            },
+            indent=2,
+        )
+
+    @server.tool()
+    async def task_list(
+        limit: int = 20,
+        status_filter: Optional[str] = None,
+    ) -> str:
+        """
+        List recent tasks with optional filtering.
+
+        Args:
+            limit: Maximum number of tasks to return (default 20)
+            status_filter: Optional status filter (running, completed, failed)
+
+        Returns:
+            JSON list of recent tasks
+        """
+        import json
+
+        task_store = get_task_store()
+
+        status = None
+        if status_filter:
+            try:
+                status = TaskStatus(status_filter)
+            except ValueError:
+                return f"Error: Invalid status '{status_filter}'. Use: running, completed, failed, pending"
+
+        tasks = await task_store.get_task_history(limit=limit, status=status)
+
+        return json.dumps(
+            {
+                "tasks": [
+                    {
+                        "task_id": t.task_id[:8],
+                        "tool": t.tool_name,
+                        "status": t.status.value,
+                        "progress": f"{t.progress_current}/{t.progress_total}",
+                        "created": t.created_at.isoformat(),
+                        "duration_sec": round(t.duration_seconds, 1) if t.duration_seconds else None,
+                    }
+                    for t in tasks
+                ],
+                "count": len(tasks),
+            },
+            indent=2,
+        )
+
+    @server.tool()
+    async def task_get(task_id: str) -> str:
+        """
+        Get full details of a specific task.
+
+        Args:
+            task_id: Task ID (full or prefix)
+
+        Returns:
+            JSON object with task details, input, and result/error
+        """
+        import json
+
+        task_store = get_task_store()
+
+        # Try exact match first, then prefix match
+        task = await task_store.get_task(task_id)
+        if not task:
+            # Try prefix match
+            tasks = await task_store.get_task_history(limit=100)
+            for t in tasks:
+                if t.task_id.startswith(task_id):
+                    task = t
+                    break
+
+        if not task:
+            return f"Error: Task '{task_id}' not found"
+
+        return json.dumps(
+            {
+                "task_id": task.task_id,
+                "tool": task.tool_name,
+                "status": task.status.value,
+                "stage": task.stage.value if task.stage else None,
+                "progress": {
+                    "current": task.progress_current,
+                    "total": task.progress_total,
+                    "message": task.progress_message,
+                    "percent": task.progress_percent,
+                },
+                "timestamps": {
+                    "created": task.created_at.isoformat(),
+                    "started": task.started_at.isoformat() if task.started_at else None,
+                    "completed": task.completed_at.isoformat() if task.completed_at else None,
+                    "duration_sec": round(task.duration_seconds, 1) if task.duration_seconds else None,
+                },
+                "input": task.input_params,
+                "result": task.result[:500] if task.result else None,
+                "error": task.error,
+            },
+            indent=2,
+        )
+
     return server
+
+
+# Track server start time for uptime calculation
+_server_start_time = time.time()
 
 
 server_instance = serve()
 
 
+STDIO_DEPRECATION_MESSAGE = """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ⚠️  STDIO TRANSPORT DEPRECATED                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  Browser automation tasks take 60-120+ seconds, which causes timeouts        ║
+║  with stdio transport. HTTP mode is now required for reliable operation.     ║
+║                                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  HOW TO MIGRATE                                                              ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  1. START THE HTTP SERVER (run this in terminal):                            ║
+║                                                                              ║
+║     uvx mcp-server-browser-use server                                        ║
+║                                                                              ║
+║  2. UPDATE YOUR CLAUDE DESKTOP CONFIG:                                       ║
+║                                                                              ║
+║     Option A - Native HTTP (if your client supports it):                     ║
+║     {                                                                        ║
+║       "mcpServers": {                                                        ║
+║         "browser-use": {                                                     ║
+║           "type": "streamable-http",                                         ║
+║           "url": "http://localhost:8000/mcp"                                 ║
+║         }                                                                    ║
+║       }                                                                      ║
+║     }                                                                        ║
+║                                                                              ║
+║     Option B - Use mcp-remote bridge (works with any MCP client):            ║
+║     {                                                                        ║
+║       "mcpServers": {                                                        ║
+║         "browser-use": {                                                     ║
+║           "command": "npx",                                                  ║
+║           "args": ["mcp-remote", "http://localhost:8000/mcp"]                ║
+║         }                                                                    ║
+║       }                                                                      ║
+║     }                                                                        ║
+║                                                                              ║
+║  DOCUMENTATION: https://github.com/AiAscendant/mcp-browser-use              ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+
 def main() -> None:
     """Entry point for MCP server."""
     transport = settings.server.transport
-    logger.info(f"Starting MCP browser-use server (provider: {settings.llm.provider}, transport: {transport})")
 
     if transport == "stdio":
-        # CRITICAL: show_banner=False prevents FastMCP from printing to stdout
-        # which would corrupt the JSON-RPC stream
-        server_instance.run(transport="stdio", show_banner=False)
+        # stdio is deprecated - print migration guide and exit
+        print(STDIO_DEPRECATION_MESSAGE, file=sys.stderr)
+        sys.exit(1)
     elif transport in ("streamable-http", "sse"):
+        logger.info(f"Starting MCP browser-use server (provider: {settings.llm.provider}, transport: {transport})")
         logger.info(f"HTTP server at http://{settings.server.host}:{settings.server.port}/mcp")
         server_instance.run(transport=transport, host=settings.server.host, port=settings.server.port)
     else:
