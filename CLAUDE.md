@@ -53,15 +53,23 @@ npx @modelcontextprotocol/inspector@latest \
 
 ```
 src/mcp_server_browser_use/
-├── server.py       # FastMCP server - defines MCP tools (run_browser_agent, run_deep_research)
+├── server.py       # FastMCP server - defines MCP tools (run_browser_agent, run_deep_research, skill_*)
 ├── config.py       # Pydantic settings - all MCP_* env vars parsed here
 ├── providers.py    # LLM factory - get_llm() creates LLM instances for different providers
 ├── cli.py          # Typer CLI - mcp-browser-cli entrypoint
 ├── exceptions.py   # Custom exceptions (LLMProviderError, BrowserError)
-└── research/       # Deep research subsystem
-    ├── models.py   # ResearchSource, SearchResult dataclasses
-    ├── machine.py  # ResearchMachine - executes research workflow with progress tracking
-    └── prompts.py  # Prompt templates for research queries
+├── research/       # Deep research subsystem
+│   ├── models.py   # ResearchSource, SearchResult dataclasses
+│   ├── machine.py  # ResearchMachine - executes research workflow with progress tracking
+│   └── prompts.py  # Prompt templates for research queries
+└── skills/         # Skills learning and replay subsystem
+    ├── __init__.py # Public API exports
+    ├── models.py   # Skill, MoneyRequest, SessionRecording dataclasses
+    ├── store.py    # SkillStore - YAML persistence (~/.config/browser-skills/)
+    ├── executor.py # SkillExecutor - hint injection + learning mode instructions
+    ├── analyzer.py # SkillAnalyzer - LLM extraction of money request from recording
+    ├── recorder.py # SkillRecorder - CDP network event capture during learning
+    └── prompts.py  # API discovery and analysis prompts
 ```
 
 **Key Patterns:**
@@ -70,6 +78,7 @@ src/mcp_server_browser_use/
 - API key resolution: Standard env vars (e.g., `OPENAI_API_KEY`) take priority over `MCP_LLM_*` prefixed ones
 - Background tasks use FastMCP's native task protocol with Progress dependency for status updates
 - Tests use FastMCP's `Client` class for in-memory testing
+- Skills use CDP network recording via `browser_session.cdp_client` for API discovery during learning mode
 
 ## Development Rules
 

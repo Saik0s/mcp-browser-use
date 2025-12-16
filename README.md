@@ -38,15 +38,89 @@ Add to your MCP client (e.g., Claude Desktop):
 |------|-------------|
 | `run_browser_agent` | Execute browser automation via natural language |
 | `run_deep_research` | Deep web research with progress tracking (supports background execution) |
+| `skill_list` | List all learned browser skills |
+| `skill_get` | Get details of a specific skill |
+| `skill_delete` | Delete a learned skill |
 
 Both tools support optional background execution via the MCP task protocol. When a client requests background execution, progress updates are streamed in real-time.
 
+## Skills (Learn & Replay)
+
+The Skills feature enables learning browser tasks once and replaying them efficiently. Skills are **machine-generated** from successful learning sessions.
+
+### Learning Mode
+
+```python
+# Learn a new skill - agent discovers API endpoints
+result = await run_browser_agent(
+    task="Find new iOS developer jobs on Upwork",
+    learn=True,                     # Enable API discovery mode
+    save_skill_as="upwork-ios-jobs" # Save extracted skill
+)
+```
+
+### Execution Mode
+
+```python
+# Use learned skill with hints for efficient execution
+result = await run_browser_agent(
+    task="Find new Python developer jobs",
+    skill_name="upwork-ios-jobs",
+    skill_params='{"keywords": "Python"}'
+)
+```
+
+Skills are stored in `~/.config/browser-skills/` as YAML files. See [docs/skills-design.md](docs/skills-design.md) for full documentation.
+
 ## CLI
 
+Single unified command: `mcp-server-browser-use`
+
 ```bash
-mcp-browser-cli -e .env run-browser-agent "Go to example.com and get the title"
-mcp-browser-cli -e .env run-deep-research "Latest AI developments"
+# Start HTTP MCP server
+mcp-server-browser-use server
+mcp-server-browser-use server --port 8080
+
+# Connect to server via stdio proxy (for Claude Desktop)
+mcp-server-browser-use connect
+mcp-server-browser-use connect --url http://localhost:8383/mcp
+
+# Run browser task directly
+mcp-server-browser-use run "Go to example.com and get the title"
+
+# Run deep research
+mcp-server-browser-use research "Latest AI developments"
+
+# Install to Claude Desktop (configures connect command)
+mcp-server-browser-use install
+
+# View configuration
+mcp-server-browser-use config view
+
+# Update configuration
+mcp-server-browser-use config set --key llm.provider --value openai
+mcp-server-browser-use config set --key browser.headless --value false
+
+# Save current config to file
+mcp-server-browser-use config save
 ```
+
+### Architecture
+
+```
+┌─────────────────┐     stdio      ┌─────────────────┐     HTTP      ┌─────────────────┐
+│  Claude Desktop │ ◄────────────► │     connect     │ ◄───────────► │     server      │
+└─────────────────┘                └─────────────────┘               └─────────────────┘
+```
+
+1. `server` - Runs persistent HTTP server (default: `http://127.0.0.1:8383/mcp`)
+2. `connect` - stdio proxy that forwards to the HTTP server
+
+### Persistent Configuration
+
+Config file location: `~/.config/mcp-server-browser-use/config.json`
+
+Results auto-save to: `~/Documents/mcp-browser-results/` (when `server.results_dir` is set)
 
 ## Configuration
 
