@@ -43,6 +43,19 @@ mcp-server-browser-use server
 }
 ```
 
+For MCP clients that don't support HTTP transport, use `mcp-remote` as a proxy:
+
+```json
+{
+  "mcpServers": {
+    "browser-use": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8000/mcp"]
+    }
+  }
+}
+```
+
 **3. Set your API key** (the browser agent needs an LLM to decide what to do):
 
 ```bash
