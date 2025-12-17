@@ -46,7 +46,7 @@ mcp-server-browser-use server
 **3. Set your API key** (the browser agent needs an LLM to decide what to do):
 
 ```bash
-export ANTHROPIC_API_KEY=your-key-here
+mcp-server-browser-use config set -k llm.api_key -v your-key-here
 ```
 
 **4. Ask Claude to browse!** Claude can now use the `run_browser_agent` tool.
@@ -153,15 +153,10 @@ mcp-server-browser-use config set -k agent.max_steps -v 30
 | `server.host` | `127.0.0.1` | Server bind address |
 | `server.port` | `8000` | Server port |
 
-### API Keys
-
-Set via environment variables:
+### API Key
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
-export OPENAI_API_KEY=sk-...
-export GOOGLE_API_KEY=...
-export OPENROUTER_API_KEY=sk-or-...
+mcp-server-browser-use config set -k llm.api_key -v sk-your-key-here
 ```
 
 ### Using Your Own Browser
