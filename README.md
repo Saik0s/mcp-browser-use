@@ -39,49 +39,50 @@ Set your API key:
 export ANTHROPIC_API_KEY=your-key-here
 ```
 
-Run browser automation:
+Start the server and run a task:
 
-```python
-await run_browser_agent(task="Go to google.com and search for AI")
+```bash
+mcp-server-browser-use server
+mcp-server-browser-use call run_browser_agent task="Go to google.com and search for AI"
 ```
 
-## Usage
+## MCP Tools
 
-### Browser Agent
+These tools are exposed via MCP for AI clients (Claude Desktop, etc.):
+
+### run_browser_agent
 
 Automate browser tasks with natural language:
 
-```python
-await run_browser_agent(task="Find the latest iPhone price on Apple")
+```bash
+mcp-server-browser-use call run_browser_agent task="Find the latest iPhone price on Apple"
 ```
 
-### Deep Research
+### run_deep_research
 
 Conduct web research with progress tracking:
 
-```python
-await run_deep_research(topic="Latest developments in quantum computing")
+```bash
+mcp-server-browser-use call run_deep_research topic="Latest developments in quantum computing"
 ```
 
 ### Skills System
 
 Learn a task once:
 
-```python
-await run_browser_agent(
-  task="Find iOS developer jobs on Upwork",
-  learn=True,
+```bash
+mcp-server-browser-use call run_browser_agent \
+  task="Find iOS developer jobs on Upwork" \
+  learn=true \
   save_skill_as="upwork-ios-jobs"
-)
 ```
 
 Replay with custom parameters:
 
-```python
-await run_browser_agent(
-  skill_name="upwork-ios-jobs",
+```bash
+mcp-server-browser-use call run_browser_agent \
+  skill_name="upwork-ios-jobs" \
   skill_params='{"keywords": "Python"}'
-)
 ```
 
 Skills save to `~/.config/browser-skills/` as YAML.
