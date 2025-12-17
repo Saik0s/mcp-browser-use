@@ -126,23 +126,43 @@ mcp-server-browser-use health          # Server health + stats
 
 ## Configuration
 
-Environment variables:
+Settings are stored in `~/.config/mcp-server-browser-use/config.json`.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP_LLM_PROVIDER` | `anthropic` | LLM provider (anthropic, openai, google, groq, openrouter) |
-| `MCP_LLM_MODEL_NAME` | `claude-sonnet-4` | Model for the browser agent |
-| `MCP_BROWSER_HEADLESS` | `true` | Run browser without GUI |
-| `MCP_SERVER_HOST` | `127.0.0.1` | Server bind address |
-| `MCP_SERVER_PORT` | `8000` | Server port |
+**View current config:**
 
-API keys (use standard env vars):
+```bash
+mcp-server-browser-use config view
+```
 
-- `ANTHROPIC_API_KEY`
-- `OPENAI_API_KEY`
-- `GOOGLE_API_KEY`
-- `OPENROUTER_API_KEY`
-- `GROQ_API_KEY`
+**Change settings:**
+
+```bash
+mcp-server-browser-use config set -k llm.provider -v openai
+mcp-server-browser-use config set -k llm.model_name -v gpt-4o
+mcp-server-browser-use config set -k browser.headless -v false
+mcp-server-browser-use config set -k agent.max_steps -v 30
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `llm.provider` | `anthropic` | LLM provider (anthropic, openai, google, groq, openrouter) |
+| `llm.model_name` | `claude-sonnet-4` | Model for the browser agent |
+| `browser.headless` | `true` | Run browser without GUI |
+| `agent.max_steps` | `20` | Max steps per browser task |
+| `research.max_searches` | `5` | Max searches per research task |
+| `server.host` | `127.0.0.1` | Server bind address |
+| `server.port` | `8000` | Server port |
+
+### API Keys
+
+Set via environment variables:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...
+export GOOGLE_API_KEY=...
+export OPENROUTER_API_KEY=sk-or-...
+```
 
 ### Using Your Own Browser
 
