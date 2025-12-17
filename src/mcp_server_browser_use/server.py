@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -54,11 +55,11 @@ from browser_use.browser.profile import ProxySettings
 from fastmcp import FastMCP
 from fastmcp.dependencies import CurrentContext, Progress
 from fastmcp.server.context import Context
-from fastmcp.server.server import TaskConfig
+from fastmcp.server.tasks.config import TaskConfig
 
 from .config import settings
 from .exceptions import BrowserError, LLMProviderError
-from .observability import TaskRecord, TaskStage, TaskStatus, bind_task_context, clear_task_context, get_task_logger
+from .observability import TaskRecord, TaskStage, TaskStatus, bind_task_context, clear_task_context, get_task_logger, setup_structured_logging
 from .observability.store import get_task_store
 from .providers import get_llm
 from .research.machine import ResearchMachine
@@ -76,6 +77,9 @@ logger.setLevel(getattr(logging, settings.server.logging_level.upper()))
 
 def serve() -> FastMCP:
     """Create and configure MCP server with background task support."""
+    # Set up structured logging first
+    setup_structured_logging()
+
     server = FastMCP("mcp_server_browser_use")
 
     # Initialize skill components
@@ -279,23 +283,28 @@ def serve() -> FastMCP:
         # Track page changes and navigation for potential skill extraction
         last_url: str | None = None
         navigation_urls: list[str] = []
+        last_db_update: float = 0.0  # Throttle DB writes to once per second
 
         async def step_callback(
             state: "BrowserStateSummary",
             output: "AgentOutput",
             step_num: int,
         ) -> None:
-            nonlocal last_url
-            if state.url != last_url:
+            nonlocal last_url, last_db_update
+            url_changed = state.url != last_url
+            if url_changed:
                 await ctx.info(f"→ {state.title or state.url}")
                 navigation_urls.append(state.url)
                 last_url = state.url
             await progress.increment()
 
-            # Update task store with progress
-            stage = TaskStage.NAVIGATING if state.url else TaskStage.EXTRACTING
-            message = state.title or state.url or f"Step {step_num}"
-            await task_store.update_progress(task_id, step_num, steps, message[:100], stage)
+            # Throttle DB updates: only write once per second or on URL change
+            now = time.monotonic()
+            if url_changed or (now - last_db_update) >= 1.0:
+                stage = TaskStage.NAVIGATING if state.url else TaskStage.EXTRACTING
+                message = state.title or state.url or f"Step {step_num}"
+                await task_store.update_progress(task_id, step_num, steps, message[:100], stage)
+                last_db_update = now
             task_logger.debug("step_completed", step=step_num, url=state.url)
 
         # Initialize recorder for learning mode
@@ -483,9 +492,9 @@ def serve() -> FastMCP:
         task_logger.info("task_running")
 
         searches = max_searches if max_searches is not None else settings.research.max_searches
-        save_path = save_to_file or (
-            f"{settings.research.save_directory}/{topic[:50].replace(' ', '_')}.md" if settings.research.save_directory else None
-        )
+        # Sanitize topic for safe filename
+        safe_topic = re.sub(r"[^\w\s-]", "", topic[:50]).strip().replace(" ", "_")
+        save_path = save_to_file or (f"{settings.research.save_directory}/{safe_topic}.md" if settings.research.save_directory else None)
 
         try:
             # Execute research with progress tracking

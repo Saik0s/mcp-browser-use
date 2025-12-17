@@ -1,7 +1,7 @@
 """SQLite-based task store for persistence and history."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +38,10 @@ class TaskStore:
             return
 
         async with aiosqlite.connect(self.db_path) as db:
+            # Enable WAL mode for better concurrency
+            await db.execute("PRAGMA journal_mode = WAL")
+            await db.execute("PRAGMA busy_timeout = 5000")
+
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id TEXT PRIMARY KEY,
@@ -72,7 +76,11 @@ class TaskStore:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
-                INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (
+                    task_id, tool_name, status, stage, created_at, started_at, completed_at,
+                    progress_current, progress_total, progress_message, input_params,
+                    result, error, session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     task.task_id,
@@ -131,11 +139,12 @@ class TaskStore:
             params: list = [status.value]
 
             if status == TaskStatus.RUNNING:
-                updates.append("started_at = ?")
-                params.append(datetime.utcnow().isoformat())
+                # Only set started_at if it's currently NULL
+                updates.append("started_at = COALESCE(started_at, ?)")
+                params.append(datetime.now(timezone.utc).isoformat())
             elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
                 updates.append("completed_at = ?")
-                params.append(datetime.utcnow().isoformat())
+                params.append(datetime.now(timezone.utc).isoformat())
 
             if result is not None:
                 updates.append("result = ?")
@@ -226,13 +235,13 @@ class TaskStore:
                 tool_counts = {row[0]: row[1] for row in await cursor.fetchall()}
 
             # Recent success rate (last 24h)
-            yesterday = (datetime.utcnow() - timedelta(days=1)).isoformat()
+            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
             async with db.execute(
                 """
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as success
-                FROM tasks WHERE created_at > ?
+                FROM tasks WHERE completed_at > ? AND completed_at IS NOT NULL
             """,
                 (TaskStatus.COMPLETED.value, yesterday),
             ) as cursor:
@@ -255,7 +264,7 @@ class TaskStore:
         """Delete tasks older than N days. Returns count deleted."""
         await self.initialize()
 
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(

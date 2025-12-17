@@ -1,6 +1,6 @@
 """Data models for task observability."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -40,7 +40,7 @@ class TaskRecord(BaseModel):
     stage: Optional[TaskStage] = None
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
@@ -62,7 +62,7 @@ class TaskRecord(BaseModel):
         """Calculate task duration in seconds."""
         if not self.started_at:
             return None
-        end = self.completed_at or datetime.utcnow()
+        end = self.completed_at or datetime.now(timezone.utc)
         return (end - self.started_at).total_seconds()
 
     @property

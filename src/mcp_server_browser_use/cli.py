@@ -54,7 +54,12 @@ def _read_server_info() -> dict | None:
     if not SERVER_INFO_FILE.exists():
         return None
     try:
-        return json.loads(SERVER_INFO_FILE.read_text())
+        info = json.loads(SERVER_INFO_FILE.read_text())
+        # Validate required keys
+        required = {"pid", "host", "port", "transport"}
+        if not required.issubset(info.keys()):
+            return None
+        return info
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -82,13 +87,14 @@ def _remove_server_info() -> None:
 
 @app.command()
 def server(
-    host: str = typer.Option(None, "--host", "-h", help="Host to bind to"),
+    host: str = typer.Option(None, "--host", "-H", help="Host to bind to"),
     port: int = typer.Option(None, "--port", "-p", help="Port to bind to"),
     transport: str = typer.Option(
         "streamable-http",
         "--transport",
         "-t",
         help="HTTP transport: streamable-http (default) or sse",
+        callback=lambda v: v if v in ("streamable-http", "sse") else typer.BadParameter(f"Invalid transport: {v}"),
     ),
     foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in foreground (don't daemonize)"),
 ) -> None:
@@ -116,7 +122,7 @@ def server(
         console.print(f"  URL: http://{h}:{p}/mcp")
         _write_server_info(os.getpid(), h, p, transport)
         try:
-            server_instance.run(transport=transport, host=h, port=p)
+            server_instance.run(transport=transport, host=h, port=p)  # type: ignore[arg-type]
         finally:
             _remove_server_info()
         return

@@ -1,7 +1,7 @@
 """Tests for observability module (TaskStore, TaskRecord, etc.)."""
 
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -40,8 +40,8 @@ class TestTaskRecord:
 
     def test_duration_calculation(self):
         """Test duration calculation for completed task."""
-        start = datetime.utcnow() - timedelta(seconds=30)
-        end = datetime.utcnow()
+        start = datetime.now(timezone.utc) - timedelta(seconds=30)
+        end = datetime.now(timezone.utc)
         record = TaskRecord(
             task_id="test-123",
             tool_name="run_browser_agent",
@@ -213,7 +213,7 @@ class TestTaskStore:
             task_id="old-task",
             tool_name="test",
             status=TaskStatus.COMPLETED,
-            created_at=datetime.utcnow() - timedelta(days=10),
+            created_at=datetime.now(timezone.utc) - timedelta(days=10),
         )
         await task_store.create_task(old_record)
 
@@ -230,7 +230,7 @@ class TestTaskStore:
             task_id="old-running",
             tool_name="test",
             status=TaskStatus.RUNNING,
-            created_at=datetime.utcnow() - timedelta(days=10),
+            created_at=datetime.now(timezone.utc) - timedelta(days=10),
         )
         await task_store.create_task(old_running)
 
