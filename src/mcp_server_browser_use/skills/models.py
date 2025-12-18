@@ -315,6 +315,23 @@ class Skill:
         total = self.success_count + self.failure_count
         return self.success_count / total if total > 0 else 0.0
 
+    def merge_params(self, user_params: dict[str, Any]) -> dict[str, Any]:
+        """Merge user-provided params with parameter defaults.
+
+        User params take precedence over defaults.
+        """
+        merged = {}
+        for param in self.parameters:
+            if param.name in user_params:
+                merged[param.name] = user_params[param.name]
+            elif param.default is not None:
+                merged[param.name] = param.default
+        # Also include any extra user params not in schema
+        for key, value in user_params.items():
+            if key not in merged:
+                merged[key] = value
+        return merged
+
     def to_dict(self) -> dict[str, Any]:
         """Convert skill to dictionary for serialization."""
         result: dict[str, Any] = {

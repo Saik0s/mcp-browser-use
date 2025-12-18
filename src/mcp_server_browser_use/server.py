@@ -121,7 +121,7 @@ def serve() -> FastMCP:
         task: str,
         max_steps: int | None = None,
         skill_name: str | None = None,
-        skill_params: str | None = None,
+        skill_params: str | dict | None = None,
         learn: bool = False,
         save_skill_as: str | None = None,
         ctx: Context = CurrentContext(),
@@ -144,7 +144,7 @@ def serve() -> FastMCP:
             task: Natural language description of what to do in the browser
             max_steps: Maximum number of agent steps (default from settings)
             skill_name: Optional skill name to use for hints (execution mode)
-            skill_params: Optional JSON string of parameters to pass to the skill
+            skill_params: Optional parameters for the skill (JSON string or dict)
             learn: Enable learning mode - agent focuses on API discovery
             save_skill_as: Name to save the learned skill (requires learn=True)
 
@@ -207,20 +207,29 @@ def serve() -> FastMCP:
             # EXECUTION MODE: Load skill
             skill = skill_store.load(skill_name)
             if skill:
-                # Parse skill params from JSON string
+                # Parse skill params (accepts dict or JSON string)
                 if skill_params:
-                    import json
+                    if isinstance(skill_params, dict):
+                        params_dict = skill_params
+                    elif isinstance(skill_params, str):
+                        import json
 
-                    try:
-                        parsed = json.loads(skill_params)
-                        if isinstance(parsed, dict):
-                            params_dict = parsed
-                        else:
-                            logger.warning(f"skill_params must be an object, got {type(parsed).__name__}")
+                        try:
+                            parsed = json.loads(skill_params)
+                            if isinstance(parsed, dict):
+                                params_dict = parsed
+                            else:
+                                logger.warning(f"skill_params must be an object, got {type(parsed).__name__}")
+                                params_dict = {}
+                        except json.JSONDecodeError:
+                            logger.warning(f"Invalid skill_params JSON: {skill_params}")
                             params_dict = {}
-                    except json.JSONDecodeError:
-                        logger.warning(f"Invalid skill_params JSON: {skill_params}")
+                    else:
+                        logger.warning(f"skill_params must be dict or JSON string, got {type(skill_params).__name__}")
                         params_dict = {}
+
+                # Merge user params with skill parameter defaults
+                merged_params = skill.merge_params(params_dict)
 
                 # NEW: Try direct execution if skill supports it
                 if skill.supports_direct_execution:
@@ -236,7 +245,7 @@ def serve() -> FastMCP:
 
                         try:
                             runner = SkillRunner()
-                            run_result = await runner.run(skill, params_dict, browser_session)
+                            run_result = await runner.run(skill, merged_params, browser_session)
 
                             if run_result.success:
                                 # Direct execution succeeded!
@@ -288,7 +297,7 @@ def serve() -> FastMCP:
                         # Continue to agent execution below
 
                 # Inject hints for agent execution (fallback or non-direct skills)
-                augmented_task = skill_executor.inject_hints(task, skill, params_dict)
+                augmented_task = skill_executor.inject_hints(task, skill, merged_params)
                 await ctx.info(f"Using skill hints: {skill.name}")
                 logger.info(f"Skill hints injected for: {skill.name}")
             else:

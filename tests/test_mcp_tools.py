@@ -22,15 +22,17 @@ async def client(monkeypatch) -> AsyncGenerator[Client, None]:
     monkeypatch.setenv("MCP_BROWSER_HEADLESS", "true")
     monkeypatch.setenv("MCP_SKILLS_ENABLED", "true")  # Enable skills for testing
 
-    # Reload config module to pick up new env vars, then reload server
+    # Reload config module to pick up new env vars
     import importlib
 
     import mcp_server_browser_use.config
 
     importlib.reload(mcp_server_browser_use.config)
 
+    # Update settings reference in server module before reloading
     import mcp_server_browser_use.server
 
+    mcp_server_browser_use.server.settings = mcp_server_browser_use.config.settings
     importlib.reload(mcp_server_browser_use.server)
 
     from mcp_server_browser_use.server import serve
@@ -49,17 +51,21 @@ async def client_skills_disabled(monkeypatch) -> AsyncGenerator[Client, None]:
     monkeypatch.setenv("MCP_LLM_MODEL_NAME", "gpt-4")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("MCP_BROWSER_HEADLESS", "true")
-    monkeypatch.setenv("MCP_SKILLS_ENABLED", "false")  # Explicitly disable skills
 
-    # Reload config module to pick up new env vars, then reload server
+    # Reload config module to pick up new env vars
     import importlib
 
     import mcp_server_browser_use.config
 
     importlib.reload(mcp_server_browser_use.config)
 
+    # Directly disable skills in the loaded settings (overrides config file)
+    mcp_server_browser_use.config.settings.skills.enabled = False
+
+    # Update settings reference in server module before reloading
     import mcp_server_browser_use.server
 
+    mcp_server_browser_use.server.settings = mcp_server_browser_use.config.settings
     importlib.reload(mcp_server_browser_use.server)
 
     from mcp_server_browser_use.server import serve
