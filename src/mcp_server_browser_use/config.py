@@ -209,7 +209,7 @@ class SkillsSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="MCP_SKILLS_")
 
-    enabled: bool = Field(default=True, description="Enable skills feature")
+    enabled: bool = Field(default=False, description="Enable skills feature (beta - disabled by default)")
     directory: str | None = Field(default=None, description="Directory containing skill YAML files (default: ~/.config/browser-skills)")
     validate_results: bool = Field(default=True, description="Validate execution results against skill success indicators")
 

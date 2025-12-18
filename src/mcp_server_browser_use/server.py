@@ -86,9 +86,12 @@ def serve() -> FastMCP:
 
     server = FastMCP("mcp_server_browser_use")
 
-    # Initialize skill components
-    skill_store = SkillStore(directory=settings.skills.directory)
-    skill_executor = SkillExecutor()
+    # Initialize skill components (only when skills feature is enabled)
+    skill_store: SkillStore | None = None
+    skill_executor: SkillExecutor | None = None
+    if settings.skills.enabled:
+        skill_store = SkillStore(directory=settings.skills.directory)
+        skill_executor = SkillExecutor()
 
     def _get_llm_and_profile():
         """Helper to get LLM instance and browser profile."""
@@ -189,13 +192,18 @@ def serve() -> FastMCP:
             logger.warning("learn=True ignores skill_name - running in learning mode")
             skill_name = None
 
-        if learn:
+        if learn and skill_executor:
             # LEARNING MODE: Inject API discovery instructions
             await ctx.info("Learning mode: Agent will discover APIs")
             augmented_task = skill_executor.inject_learning_mode(task)
             logger.info("Learning mode enabled - API discovery instructions injected")
+        elif learn:
+            # Skills disabled - warn and continue without learning
+            await ctx.info("Skills feature disabled - learn parameter ignored")
+            logger.warning("learn=True ignored - skills.enabled is False")
+            learn = False  # Disable learning for rest of execution
 
-        elif skill_name and settings.skills.enabled:
+        elif skill_name and settings.skills.enabled and skill_store and skill_executor:
             # EXECUTION MODE: Load skill
             skill = skill_store.load(skill_name)
             if skill:
@@ -286,6 +294,10 @@ def serve() -> FastMCP:
             else:
                 await ctx.info(f"Skill not found: {skill_name}")
                 logger.warning(f"Skill not found: {skill_name}")
+        elif skill_name:
+            # Skills disabled - warn and continue without skill
+            await ctx.info("Skills feature disabled - skill_name parameter ignored")
+            logger.warning(f"skill_name='{skill_name}' ignored - skills.enabled is False")
 
         steps = max_steps if max_steps is not None else settings.agent.max_steps
         await progress.set_total(steps)
@@ -350,7 +362,7 @@ def serve() -> FastMCP:
 
             # Validate result if skill was used (execution mode)
             is_valid = True
-            if skill and settings.skills.validate_results:
+            if skill and skill_executor and settings.skills.validate_results:
                 is_valid = skill_executor.validate_result(final, skill)
                 if not is_valid:
                     await ctx.info("Skill validation failed - hints may be outdated")
@@ -372,7 +384,7 @@ def serve() -> FastMCP:
                         is_valid = True  # Fallback execution is considered valid
 
             # Record skill usage statistics (execution mode)
-            if skill:
+            if skill and skill_store:
                 skill_store.record_usage(skill.name, success=is_valid)
 
             # LEARNING MODE: Attempt to extract skill from execution
@@ -404,7 +416,7 @@ def serve() -> FastMCP:
                     analyzer = SkillAnalyzer(llm)
                     extracted_skill = await analyzer.analyze(recording)
 
-                    if extracted_skill:
+                    if extracted_skill and skill_store:
                         extracted_skill.name = save_skill_as
                         skill_store.save(extracted_skill)
                         skill_extraction_result = f"\n\n[SKILL LEARNED] Saved as '{save_skill_as}'"
@@ -446,7 +458,7 @@ def serve() -> FastMCP:
                 except Exception:
                     pass  # Ignore cleanup errors
 
-            if skill:
+            if skill and skill_store:
                 skill_store.record_usage(skill.name, success=False)
 
             await task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user")
@@ -463,7 +475,7 @@ def serve() -> FastMCP:
                     pass  # Ignore cleanup errors
 
             # Record failure if skill was used
-            if skill:
+            if skill and skill_store:
                 skill_store.record_usage(skill.name, success=False)
 
             # Mark task as failed
@@ -577,72 +589,76 @@ def serve() -> FastMCP:
             clear_task_context()
             raise
 
-    # --- Skill Management Tools ---
+    # --- Skill Management Tools (only registered when skills.enabled) ---
+    if settings.skills.enabled and skill_store:
 
-    @server.tool()
-    async def skill_list() -> str:
-        """
-        List all available browser skills.
+        @server.tool()
+        async def skill_list() -> str:
+            """
+            List all available browser skills.
 
-        Returns:
-            JSON list of skill summaries with name, description, and usage stats
-        """
-        import json
+            Returns:
+                JSON list of skill summaries with name, description, and usage stats
+            """
+            import json
 
-        skills = skill_store.list_all()
+            assert skill_store is not None  # Type narrowing for mypy
+            skills = skill_store.list_all()
 
-        if not skills:
-            return json.dumps({"skills": [], "message": "No skills found. Use learn=True with save_skill_as to learn new skills."})
+            if not skills:
+                return json.dumps({"skills": [], "message": "No skills found. Use learn=True with save_skill_as to learn new skills."})
 
-        return json.dumps(
-            {
-                "skills": [
-                    {
-                        "name": s.name,
-                        "description": s.description,
-                        "success_rate": round(s.success_rate * 100, 1),
-                        "usage_count": s.success_count + s.failure_count,
-                        "last_used": s.last_used.isoformat() if s.last_used else None,
-                    }
-                    for s in skills
-                ],
-                "skills_directory": str(skill_store.directory),
-            },
-            indent=2,
-        )
+            return json.dumps(
+                {
+                    "skills": [
+                        {
+                            "name": s.name,
+                            "description": s.description,
+                            "success_rate": round(s.success_rate * 100, 1),
+                            "usage_count": s.success_count + s.failure_count,
+                            "last_used": s.last_used.isoformat() if s.last_used else None,
+                        }
+                        for s in skills
+                    ],
+                    "skills_directory": str(skill_store.directory),
+                },
+                indent=2,
+            )
 
-    @server.tool()
-    async def skill_get(skill_name: str) -> str:
-        """
-        Get full details of a specific skill.
+        @server.tool()
+        async def skill_get(skill_name: str) -> str:
+            """
+            Get full details of a specific skill.
 
-        Args:
-            skill_name: Name of the skill to retrieve
+            Args:
+                skill_name: Name of the skill to retrieve
 
-        Returns:
-            Full skill definition as YAML
-        """
-        skill = skill_store.load(skill_name)
+            Returns:
+                Full skill definition as YAML
+            """
+            assert skill_store is not None  # Type narrowing for mypy
+            skill = skill_store.load(skill_name)
 
-        if not skill:
-            return f"Error: Skill '{skill_name}' not found in {skill_store.directory}"
+            if not skill:
+                return f"Error: Skill '{skill_name}' not found in {skill_store.directory}"
 
-        return skill_store.to_yaml(skill)
+            return skill_store.to_yaml(skill)
 
-    @server.tool()
-    async def skill_delete(skill_name: str) -> str:
-        """
-        Delete a skill by name.
+        @server.tool()
+        async def skill_delete(skill_name: str) -> str:
+            """
+            Delete a skill by name.
 
-        Args:
-            skill_name: Name of the skill to delete
+            Args:
+                skill_name: Name of the skill to delete
 
-        Returns:
-            Success or error message
-        """
-        if skill_store.delete(skill_name):
-            return f"Skill '{skill_name}' deleted successfully"
-        return f"Error: Skill '{skill_name}' not found"
+            Returns:
+                Success or error message
+            """
+            assert skill_store is not None  # Type narrowing for mypy
+            if skill_store.delete(skill_name):
+                return f"Skill '{skill_name}' deleted successfully"
+            return f"Error: Skill '{skill_name}' not found"
 
     # --- Observability Tools ---
 
