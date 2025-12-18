@@ -527,19 +527,40 @@ class SkillRunner:
 
         return f"""
 (async () => {{
+    let response;
     try {{
-        const response = await fetch({json.dumps(url)}, {options_json});
-        const body = await {response_handler};
-        return {{
-            ok: response.ok,
-            status: response.status,
-            body: typeof body === 'string' ? body : JSON.stringify(body),
-        }};
+        response = await fetch({json.dumps(url)}, {options_json});
     }} catch (error) {{
         return {{
             ok: false,
             status: 0,
-            error: error.message || String(error),
+            error: 'Fetch failed: ' + (error.message || String(error)),
+        }};
+    }}
+
+    // Capture status before attempting body parse (may fail for non-JSON)
+    const status = response.status;
+    const ok = response.ok;
+
+    try {{
+        const body = await {response_handler};
+        return {{
+            ok: ok,
+            status: status,
+            body: typeof body === 'string' ? body : JSON.stringify(body),
+        }};
+    }} catch (parseError) {{
+        // Body parsing failed - try to get raw text for error context
+        let rawBody = '';
+        try {{
+            rawBody = await response.clone().text();
+        }} catch (e) {{}}
+
+        return {{
+            ok: ok,
+            status: status,
+            body: rawBody,
+            error: 'Body parse failed: ' + (parseError.message || String(parseError)),
         }};
     }}
 }})()
