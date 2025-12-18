@@ -2,13 +2,12 @@
 
 import logging
 from contextvars import ContextVar
-from typing import Optional
 
 import structlog
 
 # Context variables for current task
-current_task_id: ContextVar[Optional[str]] = ContextVar("current_task_id", default=None)
-current_tool_name: ContextVar[Optional[str]] = ContextVar("current_tool_name", default=None)
+current_task_id: ContextVar[str | None] = ContextVar("current_task_id", default=None)
+current_tool_name: ContextVar[str | None] = ContextVar("current_tool_name", default=None)
 
 _configured = False
 
@@ -82,11 +81,11 @@ def get_task_logger(name: str = "mcp_server_browser_use") -> structlog.stdlib.Bo
     return structlog.get_logger(name)
 
 
-def get_current_task_id() -> Optional[str]:
+def get_current_task_id() -> str | None:
     """Get the current task ID from context."""
     return current_task_id.get()
 
 
-def get_current_tool_name() -> Optional[str]:
+def get_current_tool_name() -> str | None:
     """Get the current tool name from context."""
     return current_tool_name.get()

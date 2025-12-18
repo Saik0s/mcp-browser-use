@@ -1,9 +1,8 @@
 """SQLite-based task store for persistence and history."""
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 import aiosqlite
 
@@ -19,7 +18,7 @@ class TaskStore:
     - Real-time status queries
     """
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         """Initialize TaskStore.
 
         Args:
@@ -106,8 +105,8 @@ class TaskStore:
         task_id: str,
         current: int,
         total: int,
-        message: Optional[str] = None,
-        stage: Optional[TaskStage] = None,
+        message: str | None = None,
+        stage: TaskStage | None = None,
     ) -> None:
         """Update task progress."""
         await self.initialize()
@@ -128,8 +127,8 @@ class TaskStore:
         self,
         task_id: str,
         status: TaskStatus,
-        result: Optional[str] = None,
-        error: Optional[str] = None,
+        result: str | None = None,
+        error: str | None = None,
     ) -> None:
         """Update task status and optionally result/error."""
         await self.initialize()
@@ -141,10 +140,10 @@ class TaskStore:
             if status == TaskStatus.RUNNING:
                 # Only set started_at if it's currently NULL
                 updates.append("started_at = COALESCE(started_at, ?)")
-                params.append(datetime.now(timezone.utc).isoformat())
+                params.append(datetime.now(UTC).isoformat())
             elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
                 updates.append("completed_at = ?")
-                params.append(datetime.now(timezone.utc).isoformat())
+                params.append(datetime.now(UTC).isoformat())
 
             if result is not None:
                 updates.append("result = ?")
@@ -158,7 +157,7 @@ class TaskStore:
             await db.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE task_id = ?", params)
             await db.commit()
 
-    async def get_task(self, task_id: str) -> Optional[TaskRecord]:
+    async def get_task(self, task_id: str) -> TaskRecord | None:
         """Get a single task by ID."""
         await self.initialize()
 
@@ -186,8 +185,8 @@ class TaskStore:
     async def get_task_history(
         self,
         limit: int = 100,
-        tool_name: Optional[str] = None,
-        status: Optional[TaskStatus] = None,
+        tool_name: str | None = None,
+        status: TaskStatus | None = None,
     ) -> list[TaskRecord]:
         """Get task history with optional filtering."""
         await self.initialize()
@@ -235,7 +234,7 @@ class TaskStore:
                 tool_counts = {row[0]: row[1] for row in await cursor.fetchall()}
 
             # Recent success rate (last 24h)
-            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+            yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
             async with db.execute(
                 """
                 SELECT
@@ -264,7 +263,7 @@ class TaskStore:
         """Delete tasks older than N days. Returns count deleted."""
         await self.initialize()
 
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
@@ -299,7 +298,7 @@ class TaskStore:
 
 
 # Singleton instance for server use
-_task_store: Optional[TaskStore] = None
+_task_store: TaskStore | None = None
 
 
 def get_task_store() -> TaskStore:

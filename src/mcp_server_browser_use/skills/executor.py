@@ -1,7 +1,6 @@
 """Skill executor for hint injection and result validation."""
 
 import logging
-from typing import Optional
 
 from .models import Skill
 from .prompts import LEARNING_MODE_SUFFIX, get_execution_hints
@@ -12,7 +11,7 @@ logger = logging.getLogger(__name__)
 class SkillExecutor:
     """Executes skills by injecting hints into agent prompts."""
 
-    def inject_hints(self, task: str, skill: Skill, params: Optional[dict] = None) -> str:
+    def inject_hints(self, task: str, skill: Skill, params: dict | None = None) -> str:
         """Augment task prompt with skill hints.
 
         Args:

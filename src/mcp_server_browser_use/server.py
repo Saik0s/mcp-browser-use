@@ -1,12 +1,13 @@
 """MCP server exposing browser-use as tools with native background task support."""
 
+import asyncio
 import logging
 import os
 import re
 import sys
 import time
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 
 def _configure_stdio_logging() -> None:
@@ -74,6 +75,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mcp_server_browser_use")
 logger.setLevel(getattr(logging, settings.server.logging_level.upper()))
 
+# Global registry of running asyncio tasks for cancellation support
+_running_tasks: dict[str, asyncio.Task] = {}
+
 
 def serve() -> FastMCP:
     """Create and configure MCP server with background task support."""
@@ -100,19 +104,25 @@ def serve() -> FastMCP:
         proxy = None
         if settings.browser.proxy_server:
             proxy = ProxySettings(server=settings.browser.proxy_server, bypass=settings.browser.proxy_bypass)
-        profile = BrowserProfile(headless=settings.browser.headless, proxy=proxy)
+        profile = BrowserProfile(
+            headless=settings.browser.headless,
+            proxy=proxy,
+            cdp_url=settings.browser.cdp_url,
+        )
+        if settings.browser.cdp_url:
+            logger.info(f"Using external browser via CDP: {settings.browser.cdp_url}")
         return llm, profile
 
     @server.tool(task=TaskConfig(mode="optional"))
     async def run_browser_agent(
         task: str,
-        max_steps: Optional[int] = None,
-        skill_name: Optional[str] = None,
-        skill_params: Optional[str] = None,
+        max_steps: int | None = None,
+        skill_name: str | None = None,
+        skill_params: str | None = None,
         learn: bool = False,
-        save_skill_as: Optional[str] = None,
-        ctx: Context = CurrentContext(),  # noqa: B008
-        progress: Progress = Progress(),  # noqa: B008
+        save_skill_as: str | None = None,
+        ctx: Context = CurrentContext(),
+        progress: Progress = Progress(),
     ) -> str:
         """
         Execute a browser automation task using AI.
@@ -328,7 +338,14 @@ def serve() -> FastMCP:
                 await recorder.attach(agent.browser_session)
                 logger.info("SkillRecorder attached via CDP for network capture")
 
-            result = await agent.run()
+            # Register task for cancellation support
+            agent_task = asyncio.create_task(agent.run())
+            _running_tasks[task_id] = agent_task
+            try:
+                result = await agent_task
+            finally:
+                _running_tasks.pop(task_id, None)
+
             final = result.final_result() or "Task completed without explicit result."
 
             # Validate result if skill was used (execution mode)
@@ -421,6 +438,22 @@ def serve() -> FastMCP:
             clear_task_context()
             return final_result
 
+        except asyncio.CancelledError:
+            # Task was cancelled
+            if recorder:
+                try:
+                    await recorder.detach()
+                except Exception:
+                    pass  # Ignore cleanup errors
+
+            if skill:
+                skill_store.record_usage(skill.name, success=False)
+
+            await task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user")
+            task_logger.info("task_cancelled")
+            clear_task_context()
+            raise
+
         except Exception as e:
             # Clean up recorder if attached
             if recorder:
@@ -444,10 +477,10 @@ def serve() -> FastMCP:
     @server.tool(task=TaskConfig(mode="optional"))
     async def run_deep_research(
         topic: str,
-        max_searches: Optional[int] = None,
-        save_to_file: Optional[str] = None,
-        ctx: Context = CurrentContext(),  # noqa: B008
-        progress: Progress = Progress(),  # noqa: B008
+        max_searches: int | None = None,
+        save_to_file: str | None = None,
+        ctx: Context = CurrentContext(),
+        progress: Progress = Progress(),
     ) -> str:
         """
         Execute deep research on a topic with progress tracking.
@@ -508,7 +541,13 @@ def serve() -> FastMCP:
                 ctx=ctx,
             )
 
-            report = await machine.run()
+            # Register task for cancellation support
+            research_task = asyncio.create_task(machine.run())
+            _running_tasks[task_id] = research_task
+            try:
+                report = await research_task
+            finally:
+                _running_tasks.pop(task_id, None)
 
             # Auto-save result if results_dir is configured and no explicit save path
             if settings.server.results_dir and not save_to_file:
@@ -524,6 +563,13 @@ def serve() -> FastMCP:
             task_logger.info("task_completed", result_length=len(report))
             clear_task_context()
             return report
+
+        except asyncio.CancelledError:
+            # Task was cancelled
+            await task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user")
+            task_logger.info("task_cancelled")
+            clear_task_context()
+            raise
 
         except Exception as e:
             await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
@@ -644,7 +690,7 @@ def serve() -> FastMCP:
     @server.tool()
     async def task_list(
         limit: int = 20,
-        status_filter: Optional[str] = None,
+        status_filter: str | None = None,
     ) -> str:
         """
         List recent tasks with optional filtering.
@@ -739,6 +785,40 @@ def serve() -> FastMCP:
             },
             indent=2,
         )
+
+    @server.tool()
+    async def task_cancel(task_id: str) -> str:
+        """
+        Cancel a running browser agent or research task.
+
+        Args:
+            task_id: Task ID (full or prefix match)
+
+        Returns:
+            JSON with success status and message
+        """
+        import json
+
+        task_store = get_task_store()
+
+        # Find by prefix match
+        matched_id = None
+        for full_id in _running_tasks:
+            if full_id.startswith(task_id) or full_id == task_id:
+                matched_id = full_id
+                break
+
+        if not matched_id:
+            return json.dumps({"success": False, "error": f"Task '{task_id}' not found or not running"})
+
+        # Cancel the asyncio task
+        task = _running_tasks[matched_id]
+        task.cancel()
+
+        # Update status in store
+        await task_store.update_status(matched_id, TaskStatus.CANCELLED, error="Cancelled by user")
+
+        return json.dumps({"success": True, "task_id": matched_id[:8], "message": "Task cancelled"})
 
     return server
 

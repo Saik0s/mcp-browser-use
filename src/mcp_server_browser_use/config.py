@@ -3,9 +3,10 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
+from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Paths ---
@@ -97,23 +98,23 @@ class LLMSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="MCP_LLM_")
 
-    provider: ProviderType = Field(default="anthropic")
-    model_name: str = Field(default="claude-sonnet-4-20250514")
-    api_key: Optional[SecretStr] = Field(default=None, description="Generic API key override (highest priority)")
-    base_url: Optional[str] = Field(default=None, description="Custom base URL for OpenAI-compatible APIs")
+    provider: ProviderType = Field(default="google")
+    model_name: str = Field(default="gemini-3-flash-preview")
+    api_key: SecretStr | None = Field(default=None, description="Generic API key override (highest priority)")
+    base_url: str | None = Field(default=None, description="Custom base URL for OpenAI-compatible APIs")
 
     # Azure OpenAI specific
-    azure_endpoint: Optional[str] = Field(default=None, description="Azure OpenAI endpoint URL")
-    azure_api_version: Optional[str] = Field(default="2024-02-01", description="Azure OpenAI API version")
+    azure_endpoint: str | None = Field(default=None, description="Azure OpenAI endpoint URL")
+    azure_api_version: str | None = Field(default="2024-02-01", description="Azure OpenAI API version")
 
     # AWS Bedrock specific
-    aws_region: Optional[str] = Field(default=None, description="AWS region for Bedrock")
+    aws_region: str | None = Field(default=None, description="AWS region for Bedrock")
 
-    def get_api_key(self) -> Optional[str]:
+    def get_api_key(self) -> str | None:
         """Extract API key value from SecretStr (legacy method for backward compat)."""
         return self.api_key.get_secret_value() if self.api_key else None
 
-    def get_api_key_for_provider(self) -> Optional[str]:
+    def get_api_key_for_provider(self) -> str | None:
         """Resolve API key with priority: generic > standard > MCP-prefixed.
 
         Priority order:
@@ -154,8 +155,18 @@ class BrowserSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MCP_BROWSER_")
 
     headless: bool = Field(default=True)
-    proxy_server: Optional[str] = Field(default=None, description="Proxy server URL (e.g., http://host:8080)")
-    proxy_bypass: Optional[str] = Field(default=None, description="Comma-separated hosts to bypass proxy")
+    proxy_server: str | None = Field(default=None, description="Proxy server URL (e.g., http://host:8080)")
+    proxy_bypass: str | None = Field(default=None, description="Comma-separated hosts to bypass proxy")
+    cdp_url: str | None = Field(default=None, description="CDP URL for external browser (e.g., http://localhost:9222)")
+
+    @model_validator(mode="after")
+    def validate_cdp_url(self) -> "BrowserSettings":
+        """Ensure CDP URL is localhost-only for security."""
+        if self.cdp_url:
+            parsed = urlparse(self.cdp_url)
+            if parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
+                raise ValueError("CDP URL must be localhost for security")
+        return self
 
 
 class AgentSettings(BaseSettings):
@@ -179,7 +190,8 @@ class ServerSettings(BaseSettings):
     transport: TransportType = Field(default="stdio", description="MCP transport: stdio, streamable-http, or sse")
     host: str = Field(default="127.0.0.1", description="Host for HTTP transports")
     port: int = Field(default=8383, description="Port for HTTP transports")
-    results_dir: Optional[str] = Field(default=None, description="Directory to save execution results")
+    results_dir: str | None = Field(default=None, description="Directory to save execution results")
+    auth_token: SecretStr | None = Field(default=None, description="Bearer token for non-localhost access")
 
 
 class ResearchSettings(BaseSettings):
@@ -188,7 +200,7 @@ class ResearchSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MCP_RESEARCH_")
 
     max_searches: int = Field(default=5, description="Maximum number of searches per research task")
-    save_directory: Optional[str] = Field(default=None, description="Directory to save research reports")
+    save_directory: str | None = Field(default=None, description="Directory to save research reports")
     search_timeout: int = Field(default=120, description="Timeout per search in seconds")
 
 
@@ -198,7 +210,7 @@ class SkillsSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MCP_SKILLS_")
 
     enabled: bool = Field(default=True, description="Enable skills feature")
-    directory: Optional[str] = Field(default=None, description="Directory containing skill YAML files (default: ~/.config/browser-skills)")
+    directory: str | None = Field(default=None, description="Directory containing skill YAML files (default: ~/.config/browser-skills)")
     validate_results: bool = Field(default=True, description="Validate execution results against skill success indicators")
 
 

@@ -1,7 +1,6 @@
 """Data models for deep research tasks."""
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -19,5 +18,5 @@ class SearchResult:
 
     query: str
     summary: str
-    source: Optional[ResearchSource] = None
-    error: Optional[str] = None
+    source: ResearchSource | None = None
+    error: str | None = None

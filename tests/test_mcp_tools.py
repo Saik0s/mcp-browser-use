@@ -50,7 +50,8 @@ class TestListTools:
         assert "health_check" in tool_names
         assert "task_list" in tool_names
         assert "task_get" in tool_names
-        assert len(tool_names) == 8
+        assert "task_cancel" in tool_names
+        assert len(tool_names) == 9
 
     @pytest.mark.anyio
     async def test_run_browser_agent_tool_schema(self, client: Client):

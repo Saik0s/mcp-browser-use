@@ -105,11 +105,11 @@ def get_llm(
                 return ChatCerebras(model=model, api_key=api_key)
 
             case "ollama":
-                return ChatOllama(model=model, base_url=base_url)
+                return ChatOllama(model=model, host=base_url)
 
             case "bedrock":
                 aws_region = kwargs.get("aws_region")
-                return ChatAWSBedrock(model_id=model, region=aws_region)
+                return ChatAWSBedrock(model=model, aws_region=aws_region)
 
             case "browser_use":
                 return ChatBrowserUse(model=model, api_key=api_key)

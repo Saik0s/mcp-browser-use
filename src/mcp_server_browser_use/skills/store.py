@@ -4,7 +4,6 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -26,7 +25,7 @@ def get_default_skills_dir() -> Path:
 class SkillStore:
     """Manages skill storage in YAML files."""
 
-    def __init__(self, directory: Optional[str] = None):
+    def __init__(self, directory: str | None = None):
         """Initialize skill store.
 
         Args:
@@ -46,7 +45,7 @@ class SkillStore:
         safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in name.lower())
         return self.directory / f"{safe_name}.yaml"
 
-    def load(self, name: str) -> Optional[Skill]:
+    def load(self, name: str) -> Skill | None:
         """Load a skill by name.
 
         Args:

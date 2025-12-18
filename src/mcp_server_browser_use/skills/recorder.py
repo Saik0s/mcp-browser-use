@@ -18,7 +18,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .models import NetworkRequest, NetworkResponse, SessionRecording
 
@@ -101,7 +101,7 @@ class SkillRecorder:
         self._capture_semaphore = asyncio.Semaphore(max_concurrent_captures)
 
         # Browser session reference
-        self._browser_session: Optional["BrowserSession"] = None
+        self._browser_session: BrowserSession | None = None
         self._attached = False
 
     def _redact_headers(self, headers: dict[str, str]) -> dict[str, str]:
@@ -149,7 +149,7 @@ class SkillRecorder:
 
         logger.info(f"SkillRecorder attached via CDP for task: {self.task[:50]}...")
 
-    def _on_request_will_be_sent(self, event: "RequestWillBeSentEvent", session_id: Optional[str]) -> None:
+    def _on_request_will_be_sent(self, event: "RequestWillBeSentEvent", session_id: str | None) -> None:
         """Handle CDP Network.requestWillBeSent event.
 
         This is a synchronous callback.
@@ -186,7 +186,7 @@ class SkillRecorder:
         except Exception as e:
             logger.debug(f"Error recording CDP request: {e}")
 
-    def _on_response_received(self, event: "ResponseReceivedEvent", session_id: Optional[str]) -> None:
+    def _on_response_received(self, event: "ResponseReceivedEvent", session_id: str | None) -> None:
         """Handle CDP Network.responseReceived event.
 
         This is a synchronous callback. Spawns async task for body capture.
@@ -231,7 +231,7 @@ class SkillRecorder:
         except Exception as e:
             logger.debug(f"Error recording CDP response: {e}")
 
-    def _on_loading_failed(self, event: "LoadingFailedEvent", session_id: Optional[str]) -> None:
+    def _on_loading_failed(self, event: "LoadingFailedEvent", session_id: str | None) -> None:
         """Handle CDP Network.loadingFailed event."""
         try:
             request_id = event.get("requestId", "")
@@ -255,7 +255,7 @@ class SkillRecorder:
         except Exception as e:
             logger.debug(f"Error recording CDP loading failure: {e}")
 
-    async def _capture_body_cdp(self, request_id: str, network_response: NetworkResponse, session_id: Optional[str]) -> None:
+    async def _capture_body_cdp(self, request_id: str, network_response: NetworkResponse, session_id: str | None) -> None:
         """Capture response body via CDP Network.getResponseBody.
 
         Args:
@@ -294,7 +294,7 @@ class SkillRecorder:
 
                 network_response.body = body
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.debug(f"CDP body capture timed out for request {request_id[:8]}")
             except Exception as e:
                 logger.debug(f"Error capturing CDP body: {e}")
@@ -329,7 +329,7 @@ class SkillRecorder:
                 asyncio.gather(*list(self._pending_tasks), return_exceptions=True),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Finalize timed out after {timeout}s with {len(self._pending_tasks)} tasks remaining")
             # Cancel remaining tasks
             for task in self._pending_tasks:
