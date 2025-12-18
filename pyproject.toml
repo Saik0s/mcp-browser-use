@@ -27,6 +27,7 @@ dependencies = [
   "aiosqlite>=0.22.0",
   "structlog>=25.5.0",
   "psutil>=7.0.0",
+  "jmespath>=1.0.1",
 ]
 
 [build-system]
@@ -44,26 +45,67 @@ mcp-server-browser-use = "mcp_server_browser_use.cli:app"
 
 [tool.pyright]
 include = ["src/mcp_server_browser_use"]
+exclude = ["**/node_modules", "**/__pycache__", ".venv", "dist"]
 venvPath = "."
 venv = ".venv"
-
-[tool.ruff.lint]
-select = ["E", "F", "I"]
-ignore = []
+pythonVersion = "3.11"
 
 [tool.ruff]
 line-length = 150
 target-version = "py311"
 
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",    # line too long (handled by formatter)
+    "SIM102",  # allow nested if statements
+    "SIM103",  # allow explicit if/return patterns
+    "SIM105",  # allow try-except-pass (clearer than contextlib.suppress)
+    "SIM108",  # allow if/else over ternary (readability)
+    "SIM115",  # allow open() without context manager (subprocess patterns)
+    "B008",    # allow function calls in defaults (Typer pattern)
+    "B904",    # allow raise without from in except (Typer Exit pattern)
+    "RUF022",  # allow unsorted __all__ (logical grouping)
+    "UP038",   # allow isinstance tuple (more readable than union)
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "I001"]
+"tests/**/*.py" = ["B", "SIM"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+timeout = 120
 markers = [
     "e2e: End-to-end tests requiring real API keys and browser",
     "integration: Integration tests with mocked LLM but real browser automation",
     "slow: Tests that take longer to run",
 ]
 
+[tool.codespell]
+ignore-words-list = "te"
+skip = ".git,*.lock,*.yaml"
+
 [dependency-groups]
-dev = ["pyright>=1.1.378", "pytest>=8.3.3", "pytest-asyncio>=0.24.0", "ruff>=0.6.9"]
+dev = [
+    "pyright>=1.1.378",
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.8.1",
+    "pre-commit>=4.0.0",
+    "codespell>=2.4.0",
+]

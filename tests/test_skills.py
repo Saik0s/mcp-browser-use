@@ -13,13 +13,16 @@ from mcp_server_browser_use.skills.runner import SkillRunner
 
 @pytest.fixture
 def skill_with_direct_execution() -> Skill:
-    """Create a skill that supports direct execution."""
+    """Create a skill that supports direct execution.
+
+    Uses example.com which is a real resolvable domain (93.184.216.34).
+    """
     return Skill(
         name="test-skill",
         description="Test skill for unit tests",
         original_task="Search for test query",
         request=SkillRequest(
-            url="https://api.example.com/search?q={query}",
+            url="https://example.com/search?q={query}",
             method="GET",
             headers={"Accept": "application/json"},
             response_type="json",
@@ -214,7 +217,7 @@ class TestSkillRunner:
         mock_browser_session.cdp_client.send.Page.navigate.assert_called()
         nav_call = mock_browser_session.cdp_client.send.Page.navigate.call_args
         assert nav_call.kwargs.get("session_id") == "test-session-123"
-        assert "https://api.example.com" in nav_call.kwargs["params"]["url"]
+        assert "https://example.com" in nav_call.kwargs["params"]["url"]
 
     async def test_run_executes_fetch_with_session_id(
         self,
@@ -325,9 +328,9 @@ class TestSkillRunner:
         skill_with_direct_execution: Skill,
         mock_browser_session: MagicMock,
     ):
-        # Mock current URL on same domain
+        # Mock current URL on same domain (example.com)
         mock_browser_session.cdp_client.send.Page.getFrameTree = AsyncMock(
-            return_value={"frameTree": {"frame": {"url": "https://api.example.com/other"}}}
+            return_value={"frameTree": {"frame": {"url": "https://example.com/other"}}}
         )
 
         # Mock successful fetch response
@@ -349,37 +352,44 @@ class TestSkillRunner:
         mock_browser_session.cdp_client.send.Page.navigate.assert_not_called()
 
 
-# --- JSON Path Extraction Tests ---
+# --- JMESPath Extraction Tests ---
 
 
-class TestSkillRunnerJsonExtraction:
-    """Tests for SkillRunner JSON path extraction."""
+class TestJMESPathExtraction:
+    """Tests for JMESPath data extraction (uses runner.extract_data)."""
 
-    @pytest.fixture
-    def runner(self) -> SkillRunner:
-        return SkillRunner()
+    def test_extract_simple_path(self):
+        from mcp_server_browser_use.skills.runner import extract_data
 
-    def test_extract_simple_path(self, runner: SkillRunner):
         data = {"foo": {"bar": "value"}}
-        result = runner._extract_json_path(data, "foo.bar")
+        result = extract_data(data, "foo.bar")
         assert result == "value"
 
-    def test_extract_array_expansion(self, runner: SkillRunner):
+    def test_extract_array_expansion(self):
+        from mcp_server_browser_use.skills.runner import extract_data
+
         data = {"items": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}
-        result = runner._extract_json_path(data, "items[*].name")
+        result = extract_data(data, "items[*].name")
         assert result == ["a", "b", "c"]
 
-    def test_extract_nested_array(self, runner: SkillRunner):
+    def test_extract_nested_array(self):
+        from mcp_server_browser_use.skills.runner import extract_data
+
         data = {"results": [{"package": {"name": "pkg1"}}, {"package": {"name": "pkg2"}}]}
-        result = runner._extract_json_path(data, "results[*].package.name")
+        result = extract_data(data, "results[*].package.name")
         assert result == ["pkg1", "pkg2"]
 
-    def test_extract_missing_path_returns_none(self, runner: SkillRunner):
+    def test_extract_missing_path_returns_none(self):
+        from mcp_server_browser_use.skills.runner import extract_data
+
         data = {"foo": "bar"}
-        result = runner._extract_json_path(data, "missing.path")
+        result = extract_data(data, "missing.path")
         assert result is None
 
-    def test_extract_index_access(self, runner: SkillRunner):
+    def test_extract_index_access(self):
+        from mcp_server_browser_use.skills.runner import extract_data
+
         data = {"items": ["first", "second", "third"]}
-        result = runner._extract_json_path(data, "items.0")
+        # JMESPath uses [0] syntax for array index access
+        result = extract_data(data, "items[0]")
         assert result == "first"
