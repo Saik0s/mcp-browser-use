@@ -135,7 +135,7 @@ mcp-server-browser-use config set -k agent.max_steps -v 30
 | `server.port` | `8383` | Server port |
 | `server.results_dir` | - | Directory to save results |
 | `server.auth_token` | - | Auth token for non-localhost connections |
-| `skills.enabled` | `true` | Enable skills system |
+| `skills.enabled` | `false` | Enable skills system (beta - disabled by default) |
 | `skills.directory` | `~/.config/browser-skills` | Skills storage location |
 | `skills.validate_results` | `true` | Validate skill execution results |
 
@@ -364,6 +364,12 @@ AI clients can query task status directly:
 ## Skills System (Super Alpha)
 
 > **Warning:** This feature is experimental and under active development. Expect rough edges.
+
+**Skills are disabled by default.** Enable them first:
+
+```bash
+mcp-server-browser-use config set -k skills.enabled -v true
+```
 
 Skills let you "teach" the agent a task once, then replay it **50x faster** by reusing discovered API endpoints instead of full browser automation.
 
