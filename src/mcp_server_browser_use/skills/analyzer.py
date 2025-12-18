@@ -6,7 +6,7 @@ the desired data) from recorded network traffic.
 
 import json
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .models import AuthRecovery, FallbackConfig, MoneyRequest, NavigationStep, SessionRecording, Skill, SkillHints, SkillParameter, SkillRequest
 from .prompts import ANALYSIS_SYSTEM_PROMPT, get_analysis_prompt
@@ -33,7 +33,7 @@ class SkillAnalyzer:
         """
         self.llm = llm
 
-    async def analyze(self, recording: SessionRecording) -> Optional[Skill]:
+    async def analyze(self, recording: SessionRecording) -> Skill | None:
         """Analyze a recording to extract a skill.
 
         Args:
@@ -88,7 +88,7 @@ class SkillAnalyzer:
             logger.error(f"Error during skill analysis: {e}")
             return None
 
-    def _parse_analysis_response(self, content: str) -> Optional[dict]:
+    def _parse_analysis_response(self, content: str) -> dict | None:
         """Parse the LLM's analysis response.
 
         Args:
@@ -208,7 +208,7 @@ class SkillAnalysisResult:
     def __init__(
         self,
         success: bool,
-        skill: Optional[Skill] = None,
+        skill: Skill | None = None,
         reason: str = "",
     ):
         self.success = success

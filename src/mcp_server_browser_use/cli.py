@@ -15,7 +15,6 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -411,8 +410,8 @@ def install() -> None:
 @app.command("config")
 def config_cmd(
     action: str = typer.Argument("view", help="Action: view, set, path, save"),
-    key: Optional[str] = typer.Option(None, "--key", "-k", help="Config key (e.g., llm.provider)"),
-    value: Optional[str] = typer.Option(None, "--value", "-v", help="Value to set"),
+    key: str | None = typer.Option(None, "--key", "-k", help="Config key (e.g., llm.provider)"),
+    value: str | None = typer.Option(None, "--value", "-v", help="Value to set"),
 ) -> None:
     """View or modify configuration."""
     if action == "path":
@@ -556,8 +555,8 @@ def skill_delete(
 @app.command()
 def tasks(
     limit: int = typer.Option(20, "--limit", "-n", help="Number of tasks to show"),
-    status_filter: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status: running, completed, failed"),
-    tool_filter: Optional[str] = typer.Option(None, "--tool", "-t", help="Filter by tool name"),
+    status_filter: str | None = typer.Option(None, "--status", "-s", help="Filter by status: running, completed, failed"),
+    tool_filter: str | None = typer.Option(None, "--tool", "-t", help="Filter by tool name"),
 ) -> None:
     """List recent tasks with status and progress."""
     import asyncio

@@ -30,7 +30,7 @@ class ResearchMachine:
         self,
         topic: str,
         max_searches: int,
-        save_path: Optional[str],
+        save_path: str | None,
         llm: "BaseChatModel",
         browser_profile: BrowserProfile,
         progress: Optional["Progress"] = None,
@@ -45,7 +45,7 @@ class ResearchMachine:
         self.ctx = ctx
         self.search_results: list[SearchResult] = []
 
-    async def _report_progress(self, message: Optional[str] = None, increment: bool = False, total: Optional[int] = None) -> None:
+    async def _report_progress(self, message: str | None = None, increment: bool = False, total: int | None = None) -> None:
         """Report progress if progress tracker is available."""
         if not self.progress:
             return

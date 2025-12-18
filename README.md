@@ -35,11 +35,16 @@ Browser automation tasks take 30-120+ seconds. The standard MCP stdio transport 
 ## Installation
 
 ```bash
-# Install and start the server
-uvx mcp-server-browser-use server
+# Clone and install
+git clone https://github.com/anthropics/mcp-server-browser-use.git
+cd mcp-server-browser-use
+uv sync
 
-# Install browser (first time only)
-uvx --from mcp-server-browser-use playwright install chromium
+# Install browser
+uv run playwright install chromium
+
+# Start the server
+uv run mcp-server-browser-use server
 ```
 
 ---
@@ -59,7 +64,7 @@ mcp-server-browser-use server
   "mcpServers": {
     "browser-use": {
       "type": "streamable-http",
-      "url": "http://localhost:8000/mcp"
+      "url": "http://localhost:8383/mcp"
     }
   }
 }
@@ -72,7 +77,7 @@ For MCP clients that don't support HTTP transport, use `mcp-remote` as a proxy:
   "mcpServers": {
     "browser-use": {
       "command": "npx",
-      "args": ["mcp-remote", "http://localhost:8000/mcp"]
+      "args": ["mcp-remote", "http://localhost:8383/mcp"]
     }
   }
 }
@@ -81,6 +86,10 @@ For MCP clients that don't support HTTP transport, use `mcp-remote` as a proxy:
 **3. Set your API key** (the browser agent needs an LLM to decide actions):
 
 ```bash
+# Set API key (environment variable - recommended)
+export GEMINI_API_KEY=your-key-here
+
+# Or use config file (less secure)
 mcp-server-browser-use config set -k llm.api_key -v your-key-here
 ```
 
@@ -103,7 +112,8 @@ mcp-server-browser-use config view
 ```bash
 mcp-server-browser-use config set -k llm.provider -v openai
 mcp-server-browser-use config set -k llm.model_name -v gpt-4o
-mcp-server-browser-use config set -k llm.api_key -v sk-...
+# Note: Set API keys via environment variables (e.g., ANTHROPIC_API_KEY) for better security
+# mcp-server-browser-use config set -k llm.api_key -v sk-...
 mcp-server-browser-use config set -k browser.headless -v false
 mcp-server-browser-use config set -k agent.max_steps -v 30
 ```
@@ -112,14 +122,22 @@ mcp-server-browser-use config set -k agent.max_steps -v 30
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `llm.provider` | `anthropic` | LLM provider (anthropic, openai, google, groq, openrouter) |
-| `llm.model_name` | `claude-sonnet-4` | Model for the browser agent |
-| `llm.api_key` | - | API key for the provider |
+| `llm.provider` | `google` | LLM provider (anthropic, openai, google, azure_openai, groq, deepseek, cerebras, ollama, bedrock, browser_use, openrouter, vercel) |
+| `llm.model_name` | `gemini-3-flash-preview` | Model for the browser agent |
+| `llm.api_key` | - | API key for the provider (prefer env vars: GEMINI_API_KEY, ANTHROPIC_API_KEY, etc.) |
 | `browser.headless` | `true` | Run browser without GUI |
+| `browser.cdp_url` | - | Connect to existing Chrome (e.g., http://localhost:9222) |
 | `agent.max_steps` | `20` | Max steps per browser task |
+| `agent.use_vision` | `true` | Enable vision capabilities for the agent |
 | `research.max_searches` | `5` | Max searches per research task |
+| `research.search_timeout` | - | Timeout for individual searches |
 | `server.host` | `127.0.0.1` | Server bind address |
-| `server.port` | `8000` | Server port |
+| `server.port` | `8383` | Server port |
+| `server.results_dir` | - | Directory to save results |
+| `server.auth_token` | - | Auth token for non-localhost connections |
+| `skills.enabled` | `false` | Enable skills system (beta - disabled by default) |
+| `skills.directory` | `~/.config/browser-skills` | Skills storage location |
+| `skills.validate_results` | `true` | Validate skill execution results |
 
 ### Config Priority
 
@@ -137,8 +155,7 @@ Connect to an existing Chrome instance (useful for staying logged into sites):
 # Launch Chrome with debugging enabled
 google-chrome --remote-debugging-port=9222
 
-# Configure the server to use it
-mcp-server-browser-use config set -k browser.use_own_browser -v true
+# Configure CDP connection (localhost only for security)
 mcp-server-browser-use config set -k browser.cdp_url -v http://localhost:9222
 ```
 
@@ -178,6 +195,7 @@ mcp-server-browser-use config path     # Show config file location
 mcp-server-browser-use tasks           # List recent tasks
 mcp-server-browser-use tasks --status running
 mcp-server-browser-use task <id>       # Get task details
+mcp-server-browser-use task cancel <id> # Cancel a running task
 mcp-server-browser-use health          # Server health + stats
 ```
 
@@ -346,6 +364,12 @@ AI clients can query task status directly:
 ## Skills System (Super Alpha)
 
 > **Warning:** This feature is experimental and under active development. Expect rough edges.
+
+**Skills are disabled by default.** Enable them first:
+
+```bash
+mcp-server-browser-use config set -k skills.enabled -v true
+```
 
 Skills let you "teach" the agent a task once, then replay it **50x faster** by reusing discovered API endpoints instead of full browser automation.
 

@@ -14,14 +14,60 @@ def anyio_backend():
 
 @pytest.fixture
 async def client(monkeypatch) -> AsyncGenerator[Client, None]:
-    """Create an in-memory FastMCP client for testing."""
+    """Create an in-memory FastMCP client for testing with skills enabled."""
+    # Set environment variables for testing
+    monkeypatch.setenv("MCP_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("MCP_LLM_MODEL_NAME", "gpt-4")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("MCP_BROWSER_HEADLESS", "true")
+    monkeypatch.setenv("MCP_SKILLS_ENABLED", "true")  # Enable skills for testing
+
+    # Reload config module to pick up new env vars
+    import importlib
+
+    import mcp_server_browser_use.config
+
+    importlib.reload(mcp_server_browser_use.config)
+
+    # Update settings reference in server module before reloading
+    import mcp_server_browser_use.server
+
+    mcp_server_browser_use.server.settings = mcp_server_browser_use.config.settings
+    importlib.reload(mcp_server_browser_use.server)
+
+    from mcp_server_browser_use.server import serve
+
+    app = serve()
+
+    async with Client(app) as client:
+        yield client
+
+
+@pytest.fixture
+async def client_skills_disabled(monkeypatch) -> AsyncGenerator[Client, None]:
+    """Create an in-memory FastMCP client with skills disabled (default behavior)."""
     # Set environment variables for testing
     monkeypatch.setenv("MCP_LLM_PROVIDER", "openai")
     monkeypatch.setenv("MCP_LLM_MODEL_NAME", "gpt-4")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("MCP_BROWSER_HEADLESS", "true")
 
-    # Import server after setting env vars to ensure config picks them up
+    # Reload config module to pick up new env vars
+    import importlib
+
+    import mcp_server_browser_use.config
+
+    importlib.reload(mcp_server_browser_use.config)
+
+    # Directly disable skills in the loaded settings (overrides config file)
+    mcp_server_browser_use.config.settings.skills.enabled = False
+
+    # Update settings reference in server module before reloading
+    import mcp_server_browser_use.server
+
+    mcp_server_browser_use.server.settings = mcp_server_browser_use.config.settings
+    importlib.reload(mcp_server_browser_use.server)
+
     from mcp_server_browser_use.server import serve
 
     app = serve()
@@ -35,14 +81,14 @@ class TestListTools:
 
     @pytest.mark.anyio
     async def test_list_tools(self, client: Client):
-        """Should list all available tools."""
+        """Should list all available tools when skills are enabled."""
         tools = await client.list_tools()
         tool_names = [tool.name for tool in tools]
 
         # Core browser automation tools
         assert "run_browser_agent" in tool_names
         assert "run_deep_research" in tool_names
-        # Skill management tools (skills are machine-generated via learning, not manually created)
+        # Skill management tools (only present when skills.enabled=true)
         assert "skill_list" in tool_names
         assert "skill_get" in tool_names
         assert "skill_delete" in tool_names
@@ -50,7 +96,28 @@ class TestListTools:
         assert "health_check" in tool_names
         assert "task_list" in tool_names
         assert "task_get" in tool_names
-        assert len(tool_names) == 8
+        assert "task_cancel" in tool_names
+        assert len(tool_names) == 9
+
+    @pytest.mark.anyio
+    async def test_list_tools_skills_disabled(self, client_skills_disabled: Client):
+        """Should not list skill tools when skills are disabled."""
+        tools = await client_skills_disabled.list_tools()
+        tool_names = [tool.name for tool in tools]
+
+        # Core browser automation tools should be present
+        assert "run_browser_agent" in tool_names
+        assert "run_deep_research" in tool_names
+        # Observability tools should be present
+        assert "health_check" in tool_names
+        assert "task_list" in tool_names
+        assert "task_get" in tool_names
+        assert "task_cancel" in tool_names
+        # Skill management tools should NOT be present when skills disabled
+        assert "skill_list" not in tool_names
+        assert "skill_get" not in tool_names
+        assert "skill_delete" not in tool_names
+        assert len(tool_names) == 6
 
     @pytest.mark.anyio
     async def test_run_browser_agent_tool_schema(self, client: Client):

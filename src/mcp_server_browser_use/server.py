@@ -1,12 +1,13 @@
 """MCP server exposing browser-use as tools with native background task support."""
 
+import asyncio
 import logging
 import os
 import re
 import sys
 import time
 import uuid
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 
 def _configure_stdio_logging() -> None:
@@ -74,6 +75,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mcp_server_browser_use")
 logger.setLevel(getattr(logging, settings.server.logging_level.upper()))
 
+# Global registry of running asyncio tasks for cancellation support
+_running_tasks: dict[str, asyncio.Task] = {}
+
 
 def serve() -> FastMCP:
     """Create and configure MCP server with background task support."""
@@ -82,9 +86,12 @@ def serve() -> FastMCP:
 
     server = FastMCP("mcp_server_browser_use")
 
-    # Initialize skill components
-    skill_store = SkillStore(directory=settings.skills.directory)
-    skill_executor = SkillExecutor()
+    # Initialize skill components (only when skills feature is enabled)
+    skill_store: SkillStore | None = None
+    skill_executor: SkillExecutor | None = None
+    if settings.skills.enabled:
+        skill_store = SkillStore(directory=settings.skills.directory)
+        skill_executor = SkillExecutor()
 
     def _get_llm_and_profile():
         """Helper to get LLM instance and browser profile."""
@@ -100,19 +107,25 @@ def serve() -> FastMCP:
         proxy = None
         if settings.browser.proxy_server:
             proxy = ProxySettings(server=settings.browser.proxy_server, bypass=settings.browser.proxy_bypass)
-        profile = BrowserProfile(headless=settings.browser.headless, proxy=proxy)
+        profile = BrowserProfile(
+            headless=settings.browser.headless,
+            proxy=proxy,
+            cdp_url=settings.browser.cdp_url,
+        )
+        if settings.browser.cdp_url:
+            logger.info(f"Using external browser via CDP: {settings.browser.cdp_url}")
         return llm, profile
 
     @server.tool(task=TaskConfig(mode="optional"))
     async def run_browser_agent(
         task: str,
-        max_steps: Optional[int] = None,
-        skill_name: Optional[str] = None,
-        skill_params: Optional[str] = None,
+        max_steps: int | None = None,
+        skill_name: str | None = None,
+        skill_params: str | dict | None = None,
         learn: bool = False,
-        save_skill_as: Optional[str] = None,
-        ctx: Context = CurrentContext(),  # noqa: B008
-        progress: Progress = Progress(),  # noqa: B008
+        save_skill_as: str | None = None,
+        ctx: Context = CurrentContext(),
+        progress: Progress = Progress(),
     ) -> str:
         """
         Execute a browser automation task using AI.
@@ -131,7 +144,7 @@ def serve() -> FastMCP:
             task: Natural language description of what to do in the browser
             max_steps: Maximum number of agent steps (default from settings)
             skill_name: Optional skill name to use for hints (execution mode)
-            skill_params: Optional JSON string of parameters to pass to the skill
+            skill_params: Optional parameters for the skill (JSON string or dict)
             learn: Enable learning mode - agent focuses on API discovery
             save_skill_as: Name to save the learned skill (requires learn=True)
 
@@ -179,30 +192,44 @@ def serve() -> FastMCP:
             logger.warning("learn=True ignores skill_name - running in learning mode")
             skill_name = None
 
-        if learn:
+        if learn and skill_executor:
             # LEARNING MODE: Inject API discovery instructions
             await ctx.info("Learning mode: Agent will discover APIs")
             augmented_task = skill_executor.inject_learning_mode(task)
             logger.info("Learning mode enabled - API discovery instructions injected")
+        elif learn:
+            # Skills disabled - warn and continue without learning
+            await ctx.info("Skills feature disabled - learn parameter ignored")
+            logger.warning("learn=True ignored - skills.enabled is False")
+            learn = False  # Disable learning for rest of execution
 
-        elif skill_name and settings.skills.enabled:
+        elif skill_name and settings.skills.enabled and skill_store and skill_executor:
             # EXECUTION MODE: Load skill
             skill = skill_store.load(skill_name)
             if skill:
-                # Parse skill params from JSON string
+                # Parse skill params (accepts dict or JSON string)
                 if skill_params:
-                    import json
+                    if isinstance(skill_params, dict):
+                        params_dict = skill_params
+                    elif isinstance(skill_params, str):
+                        import json
 
-                    try:
-                        parsed = json.loads(skill_params)
-                        if isinstance(parsed, dict):
-                            params_dict = parsed
-                        else:
-                            logger.warning(f"skill_params must be an object, got {type(parsed).__name__}")
+                        try:
+                            parsed = json.loads(skill_params)
+                            if isinstance(parsed, dict):
+                                params_dict = parsed
+                            else:
+                                logger.warning(f"skill_params must be an object, got {type(parsed).__name__}")
+                                params_dict = {}
+                        except json.JSONDecodeError:
+                            logger.warning(f"Invalid skill_params JSON: {skill_params}")
                             params_dict = {}
-                    except json.JSONDecodeError:
-                        logger.warning(f"Invalid skill_params JSON: {skill_params}")
+                    else:
+                        logger.warning(f"skill_params must be dict or JSON string, got {type(skill_params).__name__}")
                         params_dict = {}
+
+                # Merge user params with skill parameter defaults
+                merged_params = skill.merge_params(params_dict)
 
                 # NEW: Try direct execution if skill supports it
                 if skill.supports_direct_execution:
@@ -218,7 +245,7 @@ def serve() -> FastMCP:
 
                         try:
                             runner = SkillRunner()
-                            run_result = await runner.run(skill, params_dict, browser_session)
+                            run_result = await runner.run(skill, merged_params, browser_session)
 
                             if run_result.success:
                                 # Direct execution succeeded!
@@ -270,12 +297,16 @@ def serve() -> FastMCP:
                         # Continue to agent execution below
 
                 # Inject hints for agent execution (fallback or non-direct skills)
-                augmented_task = skill_executor.inject_hints(task, skill, params_dict)
+                augmented_task = skill_executor.inject_hints(task, skill, merged_params)
                 await ctx.info(f"Using skill hints: {skill.name}")
                 logger.info(f"Skill hints injected for: {skill.name}")
             else:
                 await ctx.info(f"Skill not found: {skill_name}")
                 logger.warning(f"Skill not found: {skill_name}")
+        elif skill_name:
+            # Skills disabled - warn and continue without skill
+            await ctx.info("Skills feature disabled - skill_name parameter ignored")
+            logger.warning(f"skill_name='{skill_name}' ignored - skills.enabled is False")
 
         steps = max_steps if max_steps is not None else settings.agent.max_steps
         await progress.set_total(steps)
@@ -328,12 +359,19 @@ def serve() -> FastMCP:
                 await recorder.attach(agent.browser_session)
                 logger.info("SkillRecorder attached via CDP for network capture")
 
-            result = await agent.run()
+            # Register task for cancellation support
+            agent_task = asyncio.create_task(agent.run())
+            _running_tasks[task_id] = agent_task
+            try:
+                result = await agent_task
+            finally:
+                _running_tasks.pop(task_id, None)
+
             final = result.final_result() or "Task completed without explicit result."
 
             # Validate result if skill was used (execution mode)
             is_valid = True
-            if skill and settings.skills.validate_results:
+            if skill and skill_executor and settings.skills.validate_results:
                 is_valid = skill_executor.validate_result(final, skill)
                 if not is_valid:
                     await ctx.info("Skill validation failed - hints may be outdated")
@@ -355,7 +393,7 @@ def serve() -> FastMCP:
                         is_valid = True  # Fallback execution is considered valid
 
             # Record skill usage statistics (execution mode)
-            if skill:
+            if skill and skill_store:
                 skill_store.record_usage(skill.name, success=is_valid)
 
             # LEARNING MODE: Attempt to extract skill from execution
@@ -387,7 +425,7 @@ def serve() -> FastMCP:
                     analyzer = SkillAnalyzer(llm)
                     extracted_skill = await analyzer.analyze(recording)
 
-                    if extracted_skill:
+                    if extracted_skill and skill_store:
                         extracted_skill.name = save_skill_as
                         skill_store.save(extracted_skill)
                         skill_extraction_result = f"\n\n[SKILL LEARNED] Saved as '{save_skill_as}'"
@@ -421,6 +459,22 @@ def serve() -> FastMCP:
             clear_task_context()
             return final_result
 
+        except asyncio.CancelledError:
+            # Task was cancelled
+            if recorder:
+                try:
+                    await recorder.detach()
+                except Exception:
+                    pass  # Ignore cleanup errors
+
+            if skill and skill_store:
+                skill_store.record_usage(skill.name, success=False)
+
+            await task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user")
+            task_logger.info("task_cancelled")
+            clear_task_context()
+            raise
+
         except Exception as e:
             # Clean up recorder if attached
             if recorder:
@@ -430,7 +484,7 @@ def serve() -> FastMCP:
                     pass  # Ignore cleanup errors
 
             # Record failure if skill was used
-            if skill:
+            if skill and skill_store:
                 skill_store.record_usage(skill.name, success=False)
 
             # Mark task as failed
@@ -444,10 +498,10 @@ def serve() -> FastMCP:
     @server.tool(task=TaskConfig(mode="optional"))
     async def run_deep_research(
         topic: str,
-        max_searches: Optional[int] = None,
-        save_to_file: Optional[str] = None,
-        ctx: Context = CurrentContext(),  # noqa: B008
-        progress: Progress = Progress(),  # noqa: B008
+        max_searches: int | None = None,
+        save_to_file: str | None = None,
+        ctx: Context = CurrentContext(),
+        progress: Progress = Progress(),
     ) -> str:
         """
         Execute deep research on a topic with progress tracking.
@@ -508,7 +562,13 @@ def serve() -> FastMCP:
                 ctx=ctx,
             )
 
-            report = await machine.run()
+            # Register task for cancellation support
+            research_task = asyncio.create_task(machine.run())
+            _running_tasks[task_id] = research_task
+            try:
+                report = await research_task
+            finally:
+                _running_tasks.pop(task_id, None)
 
             # Auto-save result if results_dir is configured and no explicit save path
             if settings.server.results_dir and not save_to_file:
@@ -525,78 +585,89 @@ def serve() -> FastMCP:
             clear_task_context()
             return report
 
+        except asyncio.CancelledError:
+            # Task was cancelled
+            await task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user")
+            task_logger.info("task_cancelled")
+            clear_task_context()
+            raise
+
         except Exception as e:
             await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
             task_logger.error("task_failed", error=str(e))
             clear_task_context()
             raise
 
-    # --- Skill Management Tools ---
+    # --- Skill Management Tools (only registered when skills.enabled) ---
+    if settings.skills.enabled and skill_store:
 
-    @server.tool()
-    async def skill_list() -> str:
-        """
-        List all available browser skills.
+        @server.tool()
+        async def skill_list() -> str:
+            """
+            List all available browser skills.
 
-        Returns:
-            JSON list of skill summaries with name, description, and usage stats
-        """
-        import json
+            Returns:
+                JSON list of skill summaries with name, description, and usage stats
+            """
+            import json
 
-        skills = skill_store.list_all()
+            assert skill_store is not None  # Type narrowing for mypy
+            skills = skill_store.list_all()
 
-        if not skills:
-            return json.dumps({"skills": [], "message": "No skills found. Use learn=True with save_skill_as to learn new skills."})
+            if not skills:
+                return json.dumps({"skills": [], "message": "No skills found. Use learn=True with save_skill_as to learn new skills."})
 
-        return json.dumps(
-            {
-                "skills": [
-                    {
-                        "name": s.name,
-                        "description": s.description,
-                        "success_rate": round(s.success_rate * 100, 1),
-                        "usage_count": s.success_count + s.failure_count,
-                        "last_used": s.last_used.isoformat() if s.last_used else None,
-                    }
-                    for s in skills
-                ],
-                "skills_directory": str(skill_store.directory),
-            },
-            indent=2,
-        )
+            return json.dumps(
+                {
+                    "skills": [
+                        {
+                            "name": s.name,
+                            "description": s.description,
+                            "success_rate": round(s.success_rate * 100, 1),
+                            "usage_count": s.success_count + s.failure_count,
+                            "last_used": s.last_used.isoformat() if s.last_used else None,
+                        }
+                        for s in skills
+                    ],
+                    "skills_directory": str(skill_store.directory),
+                },
+                indent=2,
+            )
 
-    @server.tool()
-    async def skill_get(skill_name: str) -> str:
-        """
-        Get full details of a specific skill.
+        @server.tool()
+        async def skill_get(skill_name: str) -> str:
+            """
+            Get full details of a specific skill.
 
-        Args:
-            skill_name: Name of the skill to retrieve
+            Args:
+                skill_name: Name of the skill to retrieve
 
-        Returns:
-            Full skill definition as YAML
-        """
-        skill = skill_store.load(skill_name)
+            Returns:
+                Full skill definition as YAML
+            """
+            assert skill_store is not None  # Type narrowing for mypy
+            skill = skill_store.load(skill_name)
 
-        if not skill:
-            return f"Error: Skill '{skill_name}' not found in {skill_store.directory}"
+            if not skill:
+                return f"Error: Skill '{skill_name}' not found in {skill_store.directory}"
 
-        return skill_store.to_yaml(skill)
+            return skill_store.to_yaml(skill)
 
-    @server.tool()
-    async def skill_delete(skill_name: str) -> str:
-        """
-        Delete a skill by name.
+        @server.tool()
+        async def skill_delete(skill_name: str) -> str:
+            """
+            Delete a skill by name.
 
-        Args:
-            skill_name: Name of the skill to delete
+            Args:
+                skill_name: Name of the skill to delete
 
-        Returns:
-            Success or error message
-        """
-        if skill_store.delete(skill_name):
-            return f"Skill '{skill_name}' deleted successfully"
-        return f"Error: Skill '{skill_name}' not found"
+            Returns:
+                Success or error message
+            """
+            assert skill_store is not None  # Type narrowing for mypy
+            if skill_store.delete(skill_name):
+                return f"Skill '{skill_name}' deleted successfully"
+            return f"Error: Skill '{skill_name}' not found"
 
     # --- Observability Tools ---
 
@@ -644,7 +715,7 @@ def serve() -> FastMCP:
     @server.tool()
     async def task_list(
         limit: int = 20,
-        status_filter: Optional[str] = None,
+        status_filter: str | None = None,
     ) -> str:
         """
         List recent tasks with optional filtering.
@@ -739,6 +810,40 @@ def serve() -> FastMCP:
             },
             indent=2,
         )
+
+    @server.tool()
+    async def task_cancel(task_id: str) -> str:
+        """
+        Cancel a running browser agent or research task.
+
+        Args:
+            task_id: Task ID (full or prefix match)
+
+        Returns:
+            JSON with success status and message
+        """
+        import json
+
+        task_store = get_task_store()
+
+        # Find by prefix match
+        matched_id = None
+        for full_id in _running_tasks:
+            if full_id.startswith(task_id) or full_id == task_id:
+                matched_id = full_id
+                break
+
+        if not matched_id:
+            return json.dumps({"success": False, "error": f"Task '{task_id}' not found or not running"})
+
+        # Cancel the asyncio task
+        task = _running_tasks[matched_id]
+        task.cancel()
+
+        # Update status in store
+        await task_store.update_status(matched_id, TaskStatus.CANCELLED, error="Cancelled by user")
+
+        return json.dumps({"success": True, "task_id": matched_id[:8], "message": "Task cancelled"})
 
     return server
 

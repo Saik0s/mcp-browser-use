@@ -160,17 +160,17 @@ class TestLLMSettingsDefaults:
                 monkeypatch.delenv(var, raising=False)
 
     def test_default_provider(self, monkeypatch):
-        """Default provider should be anthropic."""
+        """Default provider should be google."""
         # Ensure no env vars override the default
         monkeypatch.delenv("MCP_LLM_PROVIDER", raising=False)
         settings = LLMSettings()
-        assert settings.provider == "anthropic"
+        assert settings.provider == "google"
 
     def test_default_model(self, monkeypatch):
-        """Default model should be claude-sonnet-4."""
+        """Default model should be gemini-3-flash-preview."""
         monkeypatch.delenv("MCP_LLM_MODEL_NAME", raising=False)
         settings = LLMSettings()
-        assert "claude" in settings.model_name.lower()
+        assert "gemini" in settings.model_name.lower()
 
     def test_azure_defaults(self, monkeypatch):
         """Azure should have sensible defaults."""

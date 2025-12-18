@@ -1,8 +1,8 @@
 """Data models for task observability."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -37,32 +37,32 @@ class TaskRecord(BaseModel):
     task_id: str
     tool_name: str  # run_browser_agent, run_deep_research, etc.
     status: TaskStatus = TaskStatus.PENDING
-    stage: Optional[TaskStage] = None
+    stage: TaskStage | None = None
 
     # Timestamps
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
     # Progress tracking
     progress_current: int = 0
     progress_total: int = 0
-    progress_message: Optional[str] = None
+    progress_message: str | None = None
 
     # Input/Output
     input_params: dict[str, Any] = Field(default_factory=dict)
-    result: Optional[str] = None
-    error: Optional[str] = None
+    result: str | None = None
+    error: str | None = None
 
     # Context
-    session_id: Optional[str] = None  # For grouping related tasks
+    session_id: str | None = None  # For grouping related tasks
 
     @property
-    def duration_seconds(self) -> Optional[float]:
+    def duration_seconds(self) -> float | None:
         """Calculate task duration in seconds."""
         if not self.started_at:
             return None
-        end = self.completed_at or datetime.now(timezone.utc)
+        end = self.completed_at or datetime.now(UTC)
         return (end - self.started_at).total_seconds()
 
     @property

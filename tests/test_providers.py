@@ -65,21 +65,21 @@ class TestGetLLM:
         with patch("mcp_server_browser_use.providers.ChatOllama") as mock:
             mock.return_value = MagicMock()
             get_llm("ollama", "llama2")
-            mock.assert_called_once_with(model="llama2", base_url=None)
+            mock.assert_called_once_with(model="llama2", host=None)
 
     def test_ollama_with_base_url(self):
-        """Ollama should accept custom base_url."""
+        """Ollama should accept custom base_url (passed as host)."""
         with patch("mcp_server_browser_use.providers.ChatOllama") as mock:
             mock.return_value = MagicMock()
             get_llm("ollama", "llama2", base_url="http://localhost:11434")
-            mock.assert_called_once_with(model="llama2", base_url="http://localhost:11434")
+            mock.assert_called_once_with(model="llama2", host="http://localhost:11434")
 
     def test_bedrock_provider(self):
         """Bedrock provider should create ChatAWSBedrock instance."""
         with patch("mcp_server_browser_use.providers.ChatAWSBedrock") as mock:
             mock.return_value = MagicMock()
             get_llm("bedrock", "anthropic.claude-v2", aws_region="us-east-1")
-            mock.assert_called_once_with(model_id="anthropic.claude-v2", region="us-east-1")
+            mock.assert_called_once_with(model="anthropic.claude-v2", aws_region="us-east-1")
 
     def test_browser_use_provider(self):
         """Browser Use provider should create ChatBrowserUse instance."""

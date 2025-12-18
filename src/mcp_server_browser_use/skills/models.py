@@ -12,7 +12,32 @@ Execution uses browser's fetch() via CDP for:
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
+
+# Sensitive headers that should be stripped before saving skills
+SENSITIVE_HEADERS = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "x-auth-token",
+        "x-csrf-token",
+        "x-session-id",
+        "bearer",
+        "api-key",
+    }
+)
+
+
+def strip_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Remove sensitive headers before saving skill.
+
+    Unlike redaction, this completely removes sensitive headers
+    rather than replacing values with '***REDACTED***'.
+    """
+    return {k: v for k, v in headers.items() if k.lower() not in SENSITIVE_HEADERS}
+
 
 # --- Recording Models (captured during learning) ---
 
@@ -24,7 +49,7 @@ class NetworkRequest:
     url: str
     method: str
     headers: dict[str, str] = field(default_factory=dict)
-    post_data: Optional[str] = None
+    post_data: str | None = None
     resource_type: str = ""  # XHR, Fetch, Document, etc.
     timestamp: float = 0.0
     request_id: str = ""
@@ -37,7 +62,7 @@ class NetworkResponse:
     url: str
     status: int
     headers: dict[str, str] = field(default_factory=dict)
-    body: Optional[str] = None  # Response body (if captured)
+    body: str | None = None  # Response body (if captured)
     mime_type: str = ""
     timestamp: float = 0.0
     request_id: str = ""
@@ -53,7 +78,7 @@ class SessionRecording:
     responses: list[NetworkResponse] = field(default_factory=list)
     navigation_urls: list[str] = field(default_factory=list)
     start_time: datetime = field(default_factory=datetime.now)
-    end_time: Optional[datetime] = None
+    end_time: datetime | None = None
 
     def get_api_calls(self) -> list[tuple[NetworkRequest, NetworkResponse]]:
         """Get paired request/response for XHR/Fetch calls only."""
@@ -83,10 +108,10 @@ class MoneyRequest:
     endpoint: str  # URL path (without domain)
     method: str = "GET"
     content_type: str = "application/json"
-    request_template: Optional[str] = None  # Template for request body (with {param} placeholders)
-    response_path: Optional[str] = None  # JSONPath to the data in response (e.g., "data.jobs")
-    identifies_by: Optional[str] = None  # How to identify this request (e.g., "operationName: searchJobs")
-    sample_response_schema: Optional[dict] = None  # Simplified schema of expected response
+    request_template: str | None = None  # Template for request body (with {param} placeholders)
+    response_path: str | None = None  # JSONPath to the data in response (e.g., "data.jobs")
+    identifies_by: str | None = None  # How to identify this request (e.g., "operationName: searchJobs")
+    sample_response_schema: dict | None = None  # Simplified schema of expected response
 
 
 # --- Direct Execution Models (new architecture) ---
@@ -106,14 +131,17 @@ class SkillRequest:
     url: str  # Full URL with {param} placeholders, e.g., "https://npmjs.com/search?q={query}"
     method: str = "GET"
     headers: dict[str, str] = field(default_factory=dict)  # Headers to send (non-sensitive)
-    body_template: Optional[str] = None  # Request body template with {param} placeholders
+    body_template: str | None = None  # Request body template with {param} placeholders
 
     # Response handling
     response_type: Literal["json", "html", "text"] = "json"
-    extract_path: Optional[str] = None  # For JSON: JSONPath like "data.items" or "objects[*].package"
+    extract_path: str | None = None  # For JSON: JMESPath like "data.items" or "objects[*].package"
 
     # For HTML responses - CSS selectors
-    html_selectors: Optional[dict[str, str]] = None  # {"items": ".result-item", "title": "h3 a", ...}
+    html_selectors: dict[str, str] | None = None  # {"items": ".result-item", "title": "h3 a", ...}
+
+    # Security: Domain allowlist (empty = allow all for backwards compatibility)
+    allowed_domains: list[str] = field(default_factory=list)
 
     def build_url(self, params: dict[str, Any]) -> str:
         """Build URL by substituting parameter placeholders."""
@@ -122,7 +150,7 @@ class SkillRequest:
             url = url.replace(f"{{{key}}}", str(value))
         return url
 
-    def build_body(self, params: dict[str, Any]) -> Optional[str]:
+    def build_body(self, params: dict[str, Any]) -> str | None:
         """Build request body by substituting parameter placeholders."""
         if not self.body_template:
             return None
@@ -130,6 +158,13 @@ class SkillRequest:
         for key, value in params.items():
             body = body.replace(f"{{{key}}}", str(value))
         return body
+
+    def get_safe_headers(self) -> dict[str, str]:
+        """Return headers with sensitive ones removed (not redacted).
+
+        Use this when saving skills to avoid storing auth tokens.
+        """
+        return strip_sensitive_headers(self.headers)
 
     def to_fetch_options(self, params: dict[str, Any]) -> dict[str, Any]:
         """Generate JavaScript fetch() options."""
@@ -160,11 +195,11 @@ class AuthRecovery:
 
     # When to trigger recovery
     trigger_on_status: list[int] = field(default_factory=lambda: [401, 403])
-    trigger_on_body: Optional[str] = None  # Text in response body that indicates auth failure
+    trigger_on_body: str | None = None  # Text in response body that indicates auth failure
 
     # Recovery action
     recovery_page: str = ""  # URL to navigate to for re-auth (e.g., login page)
-    success_indicator: Optional[str] = None  # How to know auth succeeded (e.g., "cookie:session present")
+    success_indicator: str | None = None  # How to know auth succeeded (e.g., "cookie:session present")
 
     # Limits
     max_retries: int = 1
@@ -186,7 +221,7 @@ class SkillParameter:
     name: str
     type: str = "string"  # string, integer, boolean
     required: bool = False
-    default: Optional[str] = None
+    default: str | None = None
     description: str = ""
     source: str = ""  # Where this param was found: "url", "body", "query"
 
@@ -196,7 +231,7 @@ class SkillHints:
     """Hints for the agent to execute the skill efficiently."""
 
     navigation: list[NavigationStep] = field(default_factory=list)
-    money_request: Optional[MoneyRequest] = None
+    money_request: MoneyRequest | None = None
 
     def to_prompt(self, params: dict) -> str:
         """Convert hints to a prompt string for the agent."""
@@ -251,8 +286,8 @@ class Skill:
     original_task: str  # The task that created this skill
 
     # NEW: Direct execution configuration
-    request: Optional[SkillRequest] = None  # If set, use direct fetch() execution
-    auth_recovery: Optional[AuthRecovery] = None  # How to handle auth failures
+    request: SkillRequest | None = None  # If set, use direct fetch() execution
+    auth_recovery: AuthRecovery | None = None  # How to handle auth failures
 
     # LEGACY: Hint-based execution (agent navigates with guidance)
     hints: SkillHints = field(default_factory=SkillHints)
@@ -261,10 +296,13 @@ class Skill:
     # Metadata
     version: int = 1
     created: datetime = field(default_factory=datetime.now)
-    last_used: Optional[datetime] = None
+    last_used: datetime | None = None
     success_count: int = 0
     failure_count: int = 0
     fallback: FallbackConfig = field(default_factory=FallbackConfig)
+
+    # Skill verification status
+    status: Literal["draft", "verified", "failed"] = "draft"
 
     @property
     def supports_direct_execution(self) -> bool:
@@ -277,6 +315,23 @@ class Skill:
         total = self.success_count + self.failure_count
         return self.success_count / total if total > 0 else 0.0
 
+    def merge_params(self, user_params: dict[str, Any]) -> dict[str, Any]:
+        """Merge user-provided params with parameter defaults.
+
+        User params take precedence over defaults.
+        """
+        merged = {}
+        for param in self.parameters:
+            if param.name in user_params:
+                merged[param.name] = user_params[param.name]
+            elif param.default is not None:
+                merged[param.name] = param.default
+        # Also include any extra user params not in schema
+        for key, value in user_params.items():
+            if key not in merged:
+                merged[key] = value
+        return merged
+
     def to_dict(self) -> dict[str, Any]:
         """Convert skill to dictionary for serialization."""
         result: dict[str, Any] = {
@@ -288,6 +343,7 @@ class Skill:
             "last_used": self.last_used.isoformat() if self.last_used else None,
             "success_count": self.success_count,
             "failure_count": self.failure_count,
+            "status": self.status,
             "parameters": [
                 {
                     "name": p.name,
@@ -305,16 +361,17 @@ class Skill:
             },
         }
 
-        # NEW: Add request for direct execution
+        # Add request for direct execution (headers stripped, not redacted)
         if self.request:
             result["request"] = {
                 "url": self.request.url,
                 "method": self.request.method,
-                "headers": self.request.headers,
+                "headers": self.request.get_safe_headers(),
                 "body_template": self.request.body_template,
                 "response_type": self.request.response_type,
                 "extract_path": self.request.extract_path,
                 "html_selectors": self.request.html_selectors,
+                "allowed_domains": self.request.allowed_domains,
             }
 
         # NEW: Add auth_recovery
@@ -328,14 +385,14 @@ class Skill:
             }
 
         # LEGACY: Add hints for backward compatibility
-        result["hints"] = {
+        hints_dict: dict[str, Any] = {
             "navigation": [{"url_pattern": n.url_pattern, "description": n.description, "required": n.required} for n in self.hints.navigation],
         }
 
         # Add money_request if present (legacy)
         if self.hints.money_request:
             mr = self.hints.money_request
-            result["hints"]["money_request"] = {
+            hints_dict["money_request"] = {
                 "endpoint": mr.endpoint,
                 "method": mr.method,
                 "content_type": mr.content_type,
@@ -345,6 +402,7 @@ class Skill:
                 "sample_response_schema": mr.sample_response_schema,
             }
 
+        result["hints"] = hints_dict
         return result
 
     @classmethod
@@ -363,7 +421,7 @@ class Skill:
             for p in data.get("parameters", [])
         ]
 
-        # NEW: Parse request for direct execution
+        # Parse request for direct execution
         request = None
         req_data = data.get("request")
         if req_data:
@@ -375,6 +433,7 @@ class Skill:
                 response_type=req_data.get("response_type", "json"),
                 extract_path=req_data.get("extract_path"),
                 html_selectors=req_data.get("html_selectors"),
+                allowed_domains=req_data.get("allowed_domains", []),
             )
 
         # NEW: Parse auth_recovery
@@ -445,6 +504,7 @@ class Skill:
             last_used=last_used,
             success_count=data.get("success_count", 0),
             failure_count=data.get("failure_count", 0),
+            status=data.get("status", "draft"),
             parameters=parameters,
             request=request,
             auth_recovery=auth_recovery,
