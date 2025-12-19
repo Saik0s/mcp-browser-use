@@ -595,10 +595,26 @@ class SkillRunner:
                 return raw_body
 
         elif request.response_type == "html" and request.html_selectors:
-            # HTML parsing would require BeautifulSoup or similar
-            # For now, return raw HTML
-            logger.debug("HTML parsing not yet implemented, returning raw")
-            return raw_body
+            # Parse HTML using BeautifulSoup
+            try:
+                from bs4 import BeautifulSoup
+
+                soup = BeautifulSoup(raw_body, "html.parser")
+                extracted: dict[str, list[str]] = {}
+
+                for name, selector in request.html_selectors.items():
+                    elements = soup.select(selector)
+                    extracted[name] = [el.get_text(strip=True) for el in elements if el.get_text(strip=True)]
+
+                logger.debug(f"HTML extraction: {len(extracted)} fields extracted")
+                return extracted
+
+            except ImportError:
+                logger.warning("BeautifulSoup not installed, returning raw HTML")
+                return raw_body
+            except Exception as e:
+                logger.warning(f"HTML parsing failed: {e}")
+                return raw_body
 
         return raw_body
 
