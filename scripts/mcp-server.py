@@ -27,7 +27,7 @@ async def _check_daemon_health() -> bool:
     """Check if HTTP daemon is running and healthy."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(f"{DAEMON_URL}/mcp/tools/health_check", json={})
+            response = await client.get(f"{DAEMON_URL}/api/health")
             if response.status_code == 200:
                 result = response.json()
                 if result.get("status") == "healthy":
