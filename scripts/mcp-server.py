@@ -14,7 +14,7 @@ import sys
 from typing import Any
 
 import httpx
-from fastmcp import FastMCP
+from fastmcp import Client, FastMCP
 
 # HTTP daemon endpoint
 DAEMON_URL = "http://127.0.0.1:8383"
@@ -38,16 +38,24 @@ async def _check_daemon_health() -> bool:
 
 
 async def _forward_tool_call(tool_name: str, arguments: dict[str, Any]) -> str:
-    """Forward tool call to HTTP daemon."""
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        response = await client.post(
-            f"{DAEMON_URL}/mcp/tools/{tool_name}",
-            json=arguments,
-        )
-        response.raise_for_status()
+    """Forward tool call to HTTP daemon via MCP protocol."""
+    async with Client(f"{DAEMON_URL}/mcp") as client:
+        result = await client.call_tool(tool_name, arguments)
 
-        # Handle both string results and JSON objects
-        result = response.json()
+        # FastMCP Client returns CallToolResult with .content attribute
+        if hasattr(result, "content"):
+            content = result.content
+            if isinstance(content, list):
+                # Extract text from content blocks (TextContent type)
+                texts = []
+                for item in content:
+                    # Type-safe check for text attribute
+                    if hasattr(item, "text") and isinstance(getattr(item, "text", None), str):
+                        texts.append(item.text)  # type: ignore[attr-defined]
+                return "\n".join(texts) if texts else str(content)
+            return str(content)
+
+        # Fallback for other result types
         if isinstance(result, str):
             return result
         return json.dumps(result, indent=2)
