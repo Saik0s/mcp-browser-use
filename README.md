@@ -10,7 +10,7 @@ MCP server that gives AI assistants the power to control a web browser.
 
 - [What is this?](#what-is-this)
 - [Installation](#installation)
-- [Quick Start](#quick-start)
+- [Web UI](#web-ui)
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
 - [MCP Tools](#mcp-tools)
@@ -34,6 +34,36 @@ Browser automation tasks take 30-120+ seconds. The standard MCP stdio transport 
 
 ## Installation
 
+### Claude Code Plugin (Recommended)
+
+Install as a Claude Code plugin for automatic setup:
+
+```bash
+# Install the plugin
+/plugin install browser-use/mcp-browser-use
+```
+
+The plugin automatically:
+- Installs Playwright browsers on first run
+- Starts the HTTP daemon when Claude Code starts
+- Registers the MCP server with Claude
+
+**Set your API key** (the browser agent needs an LLM to decide actions):
+
+```bash
+# Set API key (environment variable - recommended)
+export GEMINI_API_KEY=your-key-here
+
+# Or use config file
+mcp-server-browser-use config set -k llm.api_key -v your-key-here
+```
+
+That's it! Claude can now use browser automation tools.
+
+### Manual Installation
+
+For other MCP clients or standalone use:
+
 ```bash
 # Clone and install
 git clone https://github.com/anthropics/mcp-server-browser-use.git
@@ -47,17 +77,7 @@ uv run playwright install chromium
 uv run mcp-server-browser-use server
 ```
 
----
-
-## Quick Start
-
-**1. Start the server:**
-
-```bash
-mcp-server-browser-use server
-```
-
-**2. Add to Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**Add to Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
@@ -83,17 +103,19 @@ For MCP clients that don't support HTTP transport, use `mcp-remote` as a proxy:
 }
 ```
 
-**3. Set your API key** (the browser agent needs an LLM to decide actions):
+---
 
-```bash
-# Set API key (environment variable - recommended)
-export GEMINI_API_KEY=your-key-here
+## Web UI
 
-# Or use config file (less secure)
-mcp-server-browser-use config set -k llm.api_key -v your-key-here
-```
+Access the task viewer at http://localhost:8383 when the daemon is running.
 
-**4. Ask Claude to browse!** Claude can now use the `run_browser_agent` tool.
+**Features:**
+- Real-time task list with status and progress
+- Task details with execution logs
+- Server health status and uptime
+- Running tasks monitoring
+
+The web UI provides visibility into browser automation tasks without requiring CLI commands.
 
 ---
 
@@ -127,6 +149,7 @@ mcp-server-browser-use config set -k agent.max_steps -v 30
 | `llm.api_key` | - | API key for the provider (prefer env vars: GEMINI_API_KEY, ANTHROPIC_API_KEY, etc.) |
 | `browser.headless` | `true` | Run browser without GUI |
 | `browser.cdp_url` | - | Connect to existing Chrome (e.g., http://localhost:9222) |
+| `browser.user_data_dir` | - | Chrome profile directory for persistent logins/cookies |
 | `agent.max_steps` | `20` | Max steps per browser task |
 | `agent.use_vision` | `true` | Enable vision capabilities for the agent |
 | `research.max_searches` | `5` | Max searches per research task |
@@ -149,7 +172,18 @@ Environment variables use prefix `MCP_` + section + `_` + key (e.g., `MCP_LLM_PR
 
 ### Using Your Own Browser
 
-Connect to an existing Chrome instance (useful for staying logged into sites):
+**Option 1: Persistent Profile (Recommended)**
+
+Use a dedicated Chrome profile to preserve logins and cookies:
+
+```bash
+# Set user data directory
+mcp-server-browser-use config set -k browser.user_data_dir -v ~/.chrome-browser-use
+```
+
+**Option 2: Connect to Existing Chrome**
+
+Connect to an existing Chrome instance (useful for advanced debugging):
 
 ```bash
 # Launch Chrome with debugging enabled
