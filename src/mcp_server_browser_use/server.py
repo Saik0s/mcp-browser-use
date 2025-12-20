@@ -112,6 +112,7 @@ def serve() -> FastMCP:
             headless=settings.browser.headless,
             proxy=proxy,
             cdp_url=settings.browser.cdp_url,
+            user_data_dir=settings.browser.user_data_dir,
         )
         if settings.browser.cdp_url:
             logger.info(f"Using external browser via CDP: {settings.browser.cdp_url}")

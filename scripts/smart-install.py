@@ -48,7 +48,7 @@ def check_config() -> None:
     if not config_file.exists():
         default_config = {
             "llm": {"provider": "google", "model_name": "gemini-2.0-flash-exp"},
-            "browser": {"headless": True},
+            "browser": {"headless": True, "user_data_dir": None},
             "agent": {"max_steps": 20, "use_vision": True},
             "server": {"logging_level": "INFO", "transport": "streamable-http", "host": "127.0.0.1", "port": 8383},
             "research": {"max_searches": 5, "search_timeout": 120},
