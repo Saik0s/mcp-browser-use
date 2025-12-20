@@ -1,0 +1,21 @@
+{
+  "name": "browser-use",
+  "owner": {
+    "name": "Igor Tarasenko"
+  },
+  "metadata": {
+    "description": "Browser automation plugins",
+    "version": "1.0.0",
+    "pluginRoot": ".."
+  },
+  "plugins": [
+    {
+      "name": "mcp-browser-use",
+      "source": "..",
+      "description": "Browser automation via MCP - AI-driven web interactions with Playwright",
+      "version": "1.0.0",
+      "keywords": ["browser", "automation", "mcp", "playwright"],
+      "category": "automation"
+    }
+  ]
+}
