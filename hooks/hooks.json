@@ -1,1 +1,16 @@
-{"hooks": {}}
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.py\" && python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/daemon-check.py\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
