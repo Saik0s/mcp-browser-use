@@ -2,11 +2,15 @@
 """Daemon check script - ensures HTTP daemon is running before Claude Code uses MCP tools."""
 
 import json
+import logging
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def get_state_dir() -> Path:
@@ -52,6 +56,30 @@ def check_daemon_health() -> bool:
     return is_process_running(info["pid"])
 
 
+def wait_for_daemon_health(max_attempts: int = 10, initial_delay: float = 0.2) -> bool:
+    """Wait for daemon to become healthy with exponential backoff.
+
+    Args:
+        max_attempts: Maximum number of health check attempts
+        initial_delay: Initial delay between attempts in seconds
+
+    Returns:
+        True if daemon becomes healthy, False otherwise
+    """
+    delay = initial_delay
+    for attempt in range(1, max_attempts + 1):
+        if check_daemon_health():
+            logger.info(f"Daemon health check passed on attempt {attempt}")
+            return True
+
+        logger.debug(f"Daemon health check attempt {attempt}/{max_attempts} failed, waiting {delay:.2f}s")
+        time.sleep(delay)
+        delay = min(delay * 1.5, 2.0)  # Cap at 2 seconds
+
+    logger.warning(f"Daemon failed to become healthy after {max_attempts} attempts")
+    return False
+
+
 def start_daemon() -> bool:
     """Start the HTTP daemon in background using the CLI."""
     try:
@@ -65,13 +93,10 @@ def start_daemon() -> bool:
             check=False,  # Don't raise on non-zero exit
         )
 
-        # Wait a bit for the daemon to start
-        time.sleep(2)
-
-        # Verify it started
-        return check_daemon_health()
+        # Wait for daemon to become healthy with exponential backoff
+        return wait_for_daemon_health()
     except Exception as e:
-        print(f"Error starting daemon: {e}", file=sys.stderr)
+        logger.error(f"Error starting daemon: {e}")
         return False
 
 

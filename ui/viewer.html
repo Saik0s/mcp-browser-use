@@ -399,6 +399,17 @@
         let expandedTaskId = null;
         let refreshTimer = null;
 
+        // HTML escaping utility to prevent XSS
+        function escapeHtml(unsafe) {
+            if (unsafe === null || unsafe === undefined) return '';
+            return String(unsafe)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
         // Theme management
         function initTheme() {
             const saved = localStorage.getItem('theme');
@@ -499,16 +510,36 @@
             const container = document.getElementById('taskList');
             const tasks = data.tasks || [];
 
+            // Clear existing content
+            container.innerHTML = '';
+
             if (tasks.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <path d="M12 6v6l4 2"></path>
-                        </svg>
-                        <p>No tasks yet</p>
-                    </div>
-                `;
+                const emptyState = document.createElement('div');
+                emptyState.className = 'empty-state';
+
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('viewBox', '0 0 24 24');
+                svg.setAttribute('fill', 'none');
+                svg.setAttribute('stroke', 'currentColor');
+                svg.setAttribute('stroke-width', '2');
+
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', '12');
+                circle.setAttribute('cy', '12');
+                circle.setAttribute('r', '10');
+
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', 'M12 6v6l4 2');
+
+                svg.appendChild(circle);
+                svg.appendChild(path);
+
+                const p = document.createElement('p');
+                p.textContent = 'No tasks yet';
+
+                emptyState.appendChild(svg);
+                emptyState.appendChild(p);
+                container.appendChild(emptyState);
                 return;
             }
 
@@ -517,27 +548,70 @@
             const newIds = new Set([...currentIds].filter(id => !lastTaskIds.has(id)));
             lastTaskIds = currentIds;
 
-            container.innerHTML = tasks.map(task => {
+            tasks.forEach(task => {
                 const isNew = newIds.has(task.task_id);
                 const isExpanded = expandedTaskId === task.task_id;
 
-                return `
-                    <div class="task-item ${isNew ? 'highlight' : ''}" data-task-id="${task.task_id}" onclick="toggleTaskDetails('${task.task_id}')">
-                        <div class="task-header">
-                            <div class="task-main">
-                                <span class="task-id">${task.task_id}</span>
-                                <span class="task-tool">${task.tool}</span>
-                            </div>
-                            <div class="task-meta">
-                                <span class="status-badge ${task.status}">${task.status}</span>
-                                <span class="task-progress">${task.progress}</span>
-                                <span class="task-duration">${formatDuration(task.duration_sec)}</span>
-                            </div>
-                        </div>
-                        ${isExpanded ? '<div class="task-details" id="details-' + task.task_id + '"><div class="spinner"></div> Loading...</div>' : ''}
-                    </div>
-                `;
-            }).join('');
+                const taskItem = document.createElement('div');
+                taskItem.className = `task-item ${isNew ? 'highlight' : ''}`;
+                taskItem.setAttribute('data-task-id', task.task_id);
+                taskItem.onclick = () => toggleTaskDetails(task.task_id);
+
+                const taskHeader = document.createElement('div');
+                taskHeader.className = 'task-header';
+
+                const taskMain = document.createElement('div');
+                taskMain.className = 'task-main';
+
+                const taskId = document.createElement('span');
+                taskId.className = 'task-id';
+                taskId.textContent = task.task_id;
+
+                const taskTool = document.createElement('span');
+                taskTool.className = 'task-tool';
+                taskTool.textContent = task.tool;
+
+                taskMain.appendChild(taskId);
+                taskMain.appendChild(taskTool);
+
+                const taskMeta = document.createElement('div');
+                taskMeta.className = 'task-meta';
+
+                const statusBadge = document.createElement('span');
+                statusBadge.className = `status-badge ${task.status}`;
+                statusBadge.textContent = task.status;
+
+                const taskProgress = document.createElement('span');
+                taskProgress.className = 'task-progress';
+                taskProgress.textContent = task.progress;
+
+                const taskDuration = document.createElement('span');
+                taskDuration.className = 'task-duration';
+                taskDuration.textContent = formatDuration(task.duration_sec);
+
+                taskMeta.appendChild(statusBadge);
+                taskMeta.appendChild(taskProgress);
+                taskMeta.appendChild(taskDuration);
+
+                taskHeader.appendChild(taskMain);
+                taskHeader.appendChild(taskMeta);
+                taskItem.appendChild(taskHeader);
+
+                if (isExpanded) {
+                    const taskDetails = document.createElement('div');
+                    taskDetails.className = 'task-details';
+                    taskDetails.id = `details-${task.task_id}`;
+
+                    const spinner = document.createElement('div');
+                    spinner.className = 'spinner';
+
+                    taskDetails.appendChild(spinner);
+                    taskDetails.appendChild(document.createTextNode(' Loading...'));
+                    taskItem.appendChild(taskDetails);
+                }
+
+                container.appendChild(taskItem);
+            });
 
             // If a task was expanded, reload its details
             if (expandedTaskId) {
@@ -556,6 +630,24 @@
             }
         }
 
+        // Helper to create detail row
+        function createDetailRow(label, value, className = '') {
+            const row = document.createElement('div');
+            row.className = 'detail-row';
+
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'detail-label';
+            labelDiv.textContent = label;
+
+            const valueDiv = document.createElement('div');
+            valueDiv.className = `detail-value ${className}`;
+            valueDiv.textContent = value;
+
+            row.appendChild(labelDiv);
+            row.appendChild(valueDiv);
+            return row;
+        }
+
         // Load full task details
         async function loadTaskDetails(taskId) {
             const container = document.getElementById(`details-${taskId}`);
@@ -566,71 +658,112 @@
 
                 const progressPercent = task.progress.percent || 0;
 
-                container.innerHTML = `
-                    <div class="detail-row">
-                        <div class="detail-label">Task ID</div>
-                        <div class="detail-value mono">${task.task_id}</div>
-                    </div>
-                    <div class="detail-row">
-                        <div class="detail-label">Progress</div>
-                        <div class="detail-value">${task.progress.message || 'No message'}</div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" style="width: ${progressPercent}%"></div>
-                        </div>
-                        <div class="detail-value" style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px;">
-                            ${progressPercent}% (${task.progress.current}/${task.progress.total})
-                        </div>
-                    </div>
-                    <div class="detail-row">
-                        <div class="detail-label">Timestamps</div>
-                        <div class="timestamps">
-                            <div>
-                                <div style="font-size: 12px; color: var(--text-tertiary);">Created</div>
-                                <div class="detail-value">${formatTime(task.timestamps.created)}</div>
-                            </div>
-                            <div>
-                                <div style="font-size: 12px; color: var(--text-tertiary);">Started</div>
-                                <div class="detail-value">${formatTime(task.timestamps.started)}</div>
-                            </div>
-                            <div>
-                                <div style="font-size: 12px; color: var(--text-tertiary);">Completed</div>
-                                <div class="detail-value">${formatTime(task.timestamps.completed)}</div>
-                            </div>
-                        </div>
-                    </div>
-                    ${task.input ? `
-                    <div class="detail-row">
-                        <div class="detail-label">Input Parameters</div>
-                        <div class="detail-value mono">${JSON.stringify(task.input, null, 2)}</div>
-                    </div>
-                    ` : ''}
-                    ${task.result ? `
-                    <div class="detail-row">
-                        <div class="detail-label">Result (preview)</div>
-                        <div class="detail-value mono">${task.result}</div>
-                    </div>
-                    ` : ''}
-                    ${task.error ? `
-                    <div class="detail-row">
-                        <div class="detail-label">Error</div>
-                        <div class="detail-value mono" style="color: var(--status-failed);">${task.error}</div>
-                    </div>
-                    ` : ''}
-                    ${task.stage ? `
-                    <div class="detail-row">
-                        <div class="detail-label">Stage</div>
-                        <div class="detail-value">${task.stage}</div>
-                    </div>
-                    ` : ''}
-                `;
+                // Clear existing content
+                container.innerHTML = '';
+
+                // Task ID
+                container.appendChild(createDetailRow('Task ID', task.task_id, 'mono'));
+
+                // Progress section
+                const progressRow = document.createElement('div');
+                progressRow.className = 'detail-row';
+
+                const progressLabel = document.createElement('div');
+                progressLabel.className = 'detail-label';
+                progressLabel.textContent = 'Progress';
+
+                const progressMessage = document.createElement('div');
+                progressMessage.className = 'detail-value';
+                progressMessage.textContent = task.progress.message || 'No message';
+
+                const progressBar = document.createElement('div');
+                progressBar.className = 'progress-bar';
+
+                const progressFill = document.createElement('div');
+                progressFill.className = 'progress-fill';
+                progressFill.style.width = `${progressPercent}%`;
+
+                progressBar.appendChild(progressFill);
+
+                const progressStats = document.createElement('div');
+                progressStats.className = 'detail-value';
+                progressStats.style.fontSize = '12px';
+                progressStats.style.color = 'var(--text-tertiary)';
+                progressStats.style.marginTop = '4px';
+                progressStats.textContent = `${progressPercent}% (${task.progress.current}/${task.progress.total})`;
+
+                progressRow.appendChild(progressLabel);
+                progressRow.appendChild(progressMessage);
+                progressRow.appendChild(progressBar);
+                progressRow.appendChild(progressStats);
+                container.appendChild(progressRow);
+
+                // Timestamps section
+                const timestampsRow = document.createElement('div');
+                timestampsRow.className = 'detail-row';
+
+                const timestampsLabel = document.createElement('div');
+                timestampsLabel.className = 'detail-label';
+                timestampsLabel.textContent = 'Timestamps';
+
+                const timestampsGrid = document.createElement('div');
+                timestampsGrid.className = 'timestamps';
+
+                ['created', 'started', 'completed'].forEach(type => {
+                    const timestampItem = document.createElement('div');
+
+                    const timestampLabel = document.createElement('div');
+                    timestampLabel.style.fontSize = '12px';
+                    timestampLabel.style.color = 'var(--text-tertiary)';
+                    timestampLabel.textContent = type.charAt(0).toUpperCase() + type.slice(1);
+
+                    const timestampValue = document.createElement('div');
+                    timestampValue.className = 'detail-value';
+                    timestampValue.textContent = formatTime(task.timestamps[type]);
+
+                    timestampItem.appendChild(timestampLabel);
+                    timestampItem.appendChild(timestampValue);
+                    timestampsGrid.appendChild(timestampItem);
+                });
+
+                timestampsRow.appendChild(timestampsLabel);
+                timestampsRow.appendChild(timestampsGrid);
+                container.appendChild(timestampsRow);
+
+                // Input parameters (if present)
+                if (task.input) {
+                    container.appendChild(createDetailRow('Input Parameters', JSON.stringify(task.input, null, 2), 'mono'));
+                }
+
+                // Result (if present)
+                if (task.result) {
+                    container.appendChild(createDetailRow('Result (preview)', task.result, 'mono'));
+                }
+
+                // Error (if present)
+                if (task.error) {
+                    const errorRow = createDetailRow('Error', task.error, 'mono');
+                    errorRow.querySelector('.detail-value').style.color = 'var(--status-failed)';
+                    container.appendChild(errorRow);
+                }
+
+                // Stage (if present)
+                if (task.stage) {
+                    container.appendChild(createDetailRow('Stage', task.stage));
+                }
             } catch (error) {
-                container.innerHTML = `
-                    <div class="detail-row">
-                        <div class="detail-value" style="color: var(--status-failed);">
-                            Failed to load details: ${error.message}
-                        </div>
-                    </div>
-                `;
+                container.innerHTML = '';
+
+                const errorRow = document.createElement('div');
+                errorRow.className = 'detail-row';
+
+                const errorValue = document.createElement('div');
+                errorValue.className = 'detail-value';
+                errorValue.style.color = 'var(--status-failed)';
+                errorValue.textContent = `Failed to load details: ${error.message}`;
+
+                errorRow.appendChild(errorValue);
+                container.appendChild(errorRow);
             }
         }
 
@@ -650,18 +783,41 @@
 
                 // Show error state in task list if this is the first load
                 if (lastTaskIds.size === 0) {
-                    document.getElementById('taskList').innerHTML = `
-                        <div class="error-state">
-                            <div class="status-dot offline"></div>
-                            <p><strong>Connection failed</strong></p>
-                            <p style="font-size: 14px; margin-top: 8px;">
-                                Make sure the daemon is running:<br>
-                                <code style="background: var(--bg-tertiary); padding: 4px 8px; border-radius: 4px; margin-top: 8px; display: inline-block;">
-                                    mcp-server-browser-use server
-                                </code>
-                            </p>
-                        </div>
-                    `;
+                    const taskList = document.getElementById('taskList');
+                    taskList.innerHTML = '';
+
+                    const errorState = document.createElement('div');
+                    errorState.className = 'error-state';
+
+                    const statusDot = document.createElement('div');
+                    statusDot.className = 'status-dot offline';
+
+                    const title = document.createElement('p');
+                    const strong = document.createElement('strong');
+                    strong.textContent = 'Connection failed';
+                    title.appendChild(strong);
+
+                    const instructions = document.createElement('p');
+                    instructions.style.fontSize = '14px';
+                    instructions.style.marginTop = '8px';
+                    instructions.textContent = 'Make sure the daemon is running:';
+
+                    const br = document.createElement('br');
+                    instructions.appendChild(br);
+
+                    const code = document.createElement('code');
+                    code.style.background = 'var(--bg-tertiary)';
+                    code.style.padding = '4px 8px';
+                    code.style.borderRadius = '4px';
+                    code.style.marginTop = '8px';
+                    code.style.display = 'inline-block';
+                    code.textContent = 'mcp-server-browser-use server';
+                    instructions.appendChild(code);
+
+                    errorState.appendChild(statusDot);
+                    errorState.appendChild(title);
+                    errorState.appendChild(instructions);
+                    taskList.appendChild(errorState);
                 }
             }
         }

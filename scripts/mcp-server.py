@@ -10,14 +10,40 @@ The HTTP daemon must be started separately with:
 
 import asyncio
 import json
+import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastmcp import Client, FastMCP
 
+
+def get_daemon_url() -> str:
+    """Read daemon URL from config file, fallback to default port 8383."""
+    # Determine config directory (cross-platform)
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA", Path.home() / ".config")).expanduser()
+    else:
+        base = Path("~/.config").expanduser()
+
+    config_file = base / "mcp-server-browser-use" / "config.json"
+
+    # Try to read port from config
+    port = 8383  # Default fallback
+    if config_file.exists():
+        try:
+            config = json.loads(config_file.read_text(encoding="utf-8"))
+            port = config.get("server", {}).get("port", 8383)
+        except (json.JSONDecodeError, OSError):
+            # Fall back to default if config is invalid
+            pass
+
+    return f"http://127.0.0.1:{port}"
+
+
 # HTTP daemon endpoint
-DAEMON_URL = "http://127.0.0.1:8383"
+DAEMON_URL = get_daemon_url()
 TIMEOUT = 300.0  # 5 minutes for long-running browser tasks
 
 mcp = FastMCP("browser-use")

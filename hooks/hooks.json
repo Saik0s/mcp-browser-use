@@ -6,8 +6,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.py\" && python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/daemon-check.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.py\"",
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/daemon-check.py\"",
+            "timeout": 30
           }
         ]
       }
