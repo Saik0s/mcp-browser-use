@@ -7,6 +7,7 @@ import re
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 
@@ -671,14 +672,9 @@ def serve() -> FastMCP:
 
     # --- Observability Tools ---
 
-    @server.tool()
-    async def health_check() -> str:
-        """
-        Health check endpoint with system stats and running task information.
-
-        Returns:
-            JSON object with server health status, running tasks, and statistics
-        """
+    # Define tool functions
+    async def _health_check_impl() -> str:
+        """Implementation of health check."""
         import json
 
         import psutil
@@ -712,21 +708,8 @@ def serve() -> FastMCP:
             indent=2,
         )
 
-    @server.tool()
-    async def task_list(
-        limit: int = 20,
-        status_filter: str | None = None,
-    ) -> str:
-        """
-        List recent tasks with optional filtering.
-
-        Args:
-            limit: Maximum number of tasks to return (default 20)
-            status_filter: Optional status filter (running, completed, failed)
-
-        Returns:
-            JSON list of recent tasks
-        """
+    async def _task_list_impl(limit: int = 20, status_filter: str | None = None) -> str:
+        """Implementation of task list."""
         import json
 
         task_store = get_task_store()
@@ -758,17 +741,8 @@ def serve() -> FastMCP:
             indent=2,
         )
 
-    @server.tool()
-    async def task_get(task_id: str) -> str:
-        """
-        Get full details of a specific task.
-
-        Args:
-            task_id: Task ID (full or prefix)
-
-        Returns:
-            JSON object with task details, input, and result/error
-        """
+    async def _task_get_impl(task_id: str) -> str:
+        """Implementation of task get."""
         import json
 
         task_store = get_task_store()
@@ -812,6 +786,46 @@ def serve() -> FastMCP:
         )
 
     @server.tool()
+    async def health_check() -> str:
+        """
+        Health check endpoint with system stats and running task information.
+
+        Returns:
+            JSON object with server health status, running tasks, and statistics
+        """
+        return await _health_check_impl()
+
+    @server.tool()
+    async def task_list(
+        limit: int = 20,
+        status_filter: str | None = None,
+    ) -> str:
+        """
+        List recent tasks with optional filtering.
+
+        Args:
+            limit: Maximum number of tasks to return (default 20)
+            status_filter: Optional status filter (running, completed, failed)
+
+        Returns:
+            JSON list of recent tasks
+        """
+        return await _task_list_impl(limit, status_filter)
+
+    @server.tool()
+    async def task_get(task_id: str) -> str:
+        """
+        Get full details of a specific task.
+
+        Args:
+            task_id: Task ID (full or prefix)
+
+        Returns:
+            JSON object with task details, input, and result/error
+        """
+        return await _task_get_impl(task_id)
+
+    @server.tool()
     async def task_cancel(task_id: str) -> str:
         """
         Cancel a running browser agent or research task.
@@ -844,6 +858,66 @@ def serve() -> FastMCP:
         await task_store.update_status(matched_id, TaskStatus.CANCELLED, error="Cancelled by user")
 
         return json.dumps({"success": True, "task_id": matched_id[:8], "message": "Task cancelled"})
+
+    # --- Web Viewer UI ---
+    @server.custom_route(path="/", methods=["GET"])
+    async def serve_viewer(request):
+        """Serve the web viewer UI for task monitoring."""
+        from starlette.responses import FileResponse
+
+        # Get the path to the viewer.html file
+        viewer_path = Path(__file__).parent.parent.parent / "ui" / "viewer.html"
+
+        if not viewer_path.exists():
+            from starlette.responses import Response
+
+            return Response(
+                content="Web viewer not found. Make sure ui/viewer.html exists.",
+                status_code=404,
+                media_type="text/plain",
+            )
+
+        return FileResponse(viewer_path, media_type="text/html")
+
+    # REST API endpoints for the web viewer (simpler than JSON-RPC for browser)
+    @server.custom_route(path="/api/health", methods=["GET"])
+    async def api_health(request):
+        """REST endpoint for health check."""
+        import json
+
+        from starlette.responses import JSONResponse
+
+        result = await _health_check_impl()
+        return JSONResponse(json.loads(result))
+
+    @server.custom_route(path="/api/tasks", methods=["GET"])
+    async def api_tasks(request):
+        """REST endpoint for task list."""
+        import json
+
+        from starlette.responses import JSONResponse
+
+        limit = int(request.query_params.get("limit", "20"))
+        status_filter = request.query_params.get("status", None)
+
+        result = await _task_list_impl(limit=limit, status_filter=status_filter)
+        return JSONResponse(json.loads(result))
+
+    @server.custom_route(path="/api/tasks/{task_id}", methods=["GET"])
+    async def api_task_get(request):
+        """REST endpoint for task details."""
+        import json
+
+        from starlette.responses import JSONResponse
+
+        task_id = request.path_params["task_id"]
+        result = await _task_get_impl(task_id)
+
+        # Check if it's an error message
+        if result.startswith("Error:"):
+            return JSONResponse({"error": result}, status_code=404)
+
+        return JSONResponse(json.loads(result))
 
     return server
 

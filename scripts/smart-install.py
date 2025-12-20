@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Smart install script - runs on SessionStart to ensure dependencies."""
+
 import json
 import os
 import subprocess
@@ -46,31 +47,12 @@ def check_config() -> None:
     # Create default config if missing
     if not config_file.exists():
         default_config = {
-            "llm": {
-                "provider": "google",
-                "model_name": "gemini-2.0-flash-exp"
-            },
-            "browser": {
-                "headless": True
-            },
-            "agent": {
-                "max_steps": 20,
-                "use_vision": True
-            },
-            "server": {
-                "logging_level": "INFO",
-                "transport": "streamable-http",
-                "host": "127.0.0.1",
-                "port": 8383
-            },
-            "research": {
-                "max_searches": 5,
-                "search_timeout": 120
-            },
-            "skills": {
-                "enabled": False,
-                "validate_results": True
-            }
+            "llm": {"provider": "google", "model_name": "gemini-2.0-flash-exp"},
+            "browser": {"headless": True},
+            "agent": {"max_steps": 20, "use_vision": True},
+            "server": {"logging_level": "INFO", "transport": "streamable-http", "host": "127.0.0.1", "port": 8383},
+            "research": {"max_searches": 5, "search_timeout": 120},
+            "skills": {"enabled": False, "validate_results": True},
         }
 
         config_file.write_text(json.dumps(default_config, indent=2), encoding="utf-8")
@@ -90,17 +72,11 @@ def main():
         except Exception as e:
             print(f"✗ {name}: {e}", file=sys.stderr)
             # Return hook error response
-            print(json.dumps({
-                "continue": False,
-                "error": f"Setup failed: {name} - {e}"
-            }))
+            print(json.dumps({"continue": False, "error": f"Setup failed: {name} - {e}"}))
             sys.exit(1)
 
     # Return hook success response
-    print(json.dumps({
-        "continue": True,
-        "suppressOutput": True
-    }))
+    print(json.dumps({"continue": True, "suppressOutput": True}))
 
 
 if __name__ == "__main__":

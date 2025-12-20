@@ -235,14 +235,14 @@ async def _startup_check():
     healthy = await _check_daemon_health()
 
     if not healthy:
-        print("\n" + "="*80, file=sys.stderr)
+        print("\n" + "=" * 80, file=sys.stderr)
         print("ERROR: HTTP daemon is not running or unhealthy", file=sys.stderr)
-        print("="*80, file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
         print("\nPlease start the daemon with:", file=sys.stderr)
         print("    mcp-server-browser-use server", file=sys.stderr)
         print("\nOr check the logs with:", file=sys.stderr)
         print("    mcp-server-browser-use logs -f", file=sys.stderr)
-        print("="*80 + "\n", file=sys.stderr)
+        print("=" * 80 + "\n", file=sys.stderr)
         sys.exit(1)
 
     print(f"✓ HTTP daemon is healthy at {DAEMON_URL}", file=sys.stderr)

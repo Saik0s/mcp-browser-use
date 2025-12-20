@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Browser Use - Task Monitor</title>
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f6f8fa;
+            --bg-tertiary: #f0f2f5;
+            --text-primary: #24292f;
+            --text-secondary: #57606a;
+            --text-tertiary: #6e7781;
+            --border-color: #d0d7de;
+            --status-running: #0969da;
+            --status-completed: #1a7f37;
+            --status-failed: #cf222e;
+            --status-pending: #bf8700;
+            --status-cancelled: #6e7781;
+            --health-online: #1a7f37;
+            --health-offline: #cf222e;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        [data-theme="dark"] {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #1c2128;
+            --text-primary: #e6edf3;
+            --text-secondary: #9198a1;
+            --text-tertiary: #7d8590;
+            --border-color: #30363d;
+            --status-running: #4493f8;
+            --status-completed: #3fb950;
+            --status-failed: #f85149;
+            --status-pending: #d29922;
+            --status-cancelled: #8b949e;
+            --health-online: #3fb950;
+            --health-offline: #f85149;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Health Bar */
+        .health-bar {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .health-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.online {
+            background: var(--health-online);
+        }
+
+        .status-dot.offline {
+            background: var(--health-offline);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .health-info {
+            display: flex;
+            gap: 20px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .health-info span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Theme Toggle */
+        .theme-toggle {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 14px;
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            background: var(--bg-secondary);
+        }
+
+        /* Task List */
+        .task-list {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .task-list-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .task-item {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .task-item:hover {
+            background: var(--bg-secondary);
+        }
+
+        .task-item:last-child {
+            border-bottom: none;
+        }
+
+        .task-item.highlight {
+            animation: highlight 1s;
+        }
+
+        @keyframes highlight {
+            0%, 100% { background: var(--bg-primary); }
+            50% { background: var(--bg-tertiary); }
+        }
+
+        .task-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .task-main {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .task-id {
+            font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
+            font-size: 13px;
+            color: var(--text-tertiary);
+            flex-shrink: 0;
+        }
+
+        .task-tool {
+            font-weight: 500;
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .task-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            color: white;
+            text-transform: capitalize;
+        }
+
+        .status-badge.running { background: var(--status-running); }
+        .status-badge.completed { background: var(--status-completed); }
+        .status-badge.failed { background: var(--status-failed); }
+        .status-badge.pending { background: var(--status-pending); }
+        .status-badge.cancelled { background: var(--status-cancelled); }
+
+        .task-progress {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-family: "SF Mono", Monaco, monospace;
+        }
+
+        .task-duration {
+            font-size: 13px;
+            color: var(--text-tertiary);
+        }
+
+        /* Task Details */
+        .task-details {
+            background: var(--bg-tertiary);
+            padding: 16px 20px;
+            margin-top: 12px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .detail-row {
+            margin-bottom: 12px;
+        }
+
+        .detail-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .detail-value {
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+
+        .detail-value.mono {
+            font-family: "SF Mono", Monaco, monospace;
+            font-size: 13px;
+            background: var(--bg-secondary);
+            padding: 8px 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
+        .progress-bar {
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            height: 8px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+
+        .progress-fill {
+            background: var(--status-running);
+            height: 100%;
+            transition: width 0.3s;
+        }
+
+        .timestamps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Error State */
+        .error-state {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        .error-state .status-dot {
+            margin: 0 auto 16px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 12px;
+            }
+
+            .health-bar {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+
+            .health-info {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .task-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .task-meta {
+                width: 100%;
+                justify-content: space-between;
+            }
+        }
+
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--text-tertiary);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="health-bar">
+            <div class="health-status">
+                <div class="status-dot" id="statusDot"></div>
+                <div>
+                    <strong id="statusText">Connecting...</strong>
+                </div>
+            </div>
+            <div class="health-info">
+                <span>Uptime: <strong id="uptime">-</strong></span>
+                <span>Memory: <strong id="memory">-</strong></span>
+                <span>Running: <strong id="runningCount">-</strong></span>
+                <button class="theme-toggle" id="themeToggle">🌙 Dark</button>
+            </div>
+        </div>
+
+        <div class="task-list" id="taskListContainer">
+            <div class="task-list-header">Recent Tasks</div>
+            <div id="taskList">
+                <div class="empty-state">
+                    <div class="spinner"></div>
+                    <p>Loading tasks...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8383/api';
+        const REFRESH_INTERVAL = 2000; // 2 seconds
+
+        let lastTaskIds = new Set();
+        let expandedTaskId = null;
+        let refreshTimer = null;
+
+        // Theme management
+        function initTheme() {
+            const saved = localStorage.getItem('theme');
+            const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+            updateThemeButton(theme);
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            updateThemeButton(next);
+        }
+
+        function updateThemeButton(theme) {
+            const btn = document.getElementById('themeToggle');
+            btn.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark';
+        }
+
+        // API calls
+        async function fetchHealth() {
+            const response = await fetch(`${API_BASE}/health`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return await response.json();
+        }
+
+        async function fetchTasks(limit = 20, status = null) {
+            const params = new URLSearchParams({ limit: limit.toString() });
+            if (status) params.append('status', status);
+
+            const response = await fetch(`${API_BASE}/tasks?${params}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return await response.json();
+        }
+
+        async function fetchTaskDetails(taskId) {
+            const response = await fetch(`${API_BASE}/tasks/${taskId}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return await response.json();
+        }
+
+        // Update health status
+        function updateHealth(health) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const uptime = document.getElementById('uptime');
+            const memory = document.getElementById('memory');
+            const running = document.getElementById('runningCount');
+
+            dot.className = 'status-dot online';
+            text.textContent = 'Daemon Online';
+
+            const uptimeMin = Math.floor(health.uptime_seconds / 60);
+            uptime.textContent = uptimeMin < 1 ? '< 1m' : `${uptimeMin}m`;
+            memory.textContent = `${health.memory_mb} MB`;
+            running.textContent = health.running_tasks;
+        }
+
+        function showOffline(error) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+
+            dot.className = 'status-dot offline';
+            text.textContent = 'Daemon Offline';
+
+            document.getElementById('uptime').textContent = '-';
+            document.getElementById('memory').textContent = '-';
+            document.getElementById('runningCount').textContent = '-';
+        }
+
+        // Format duration
+        function formatDuration(seconds) {
+            if (!seconds) return '-';
+            if (seconds < 1) return '< 1s';
+            if (seconds < 60) return `${Math.round(seconds)}s`;
+            const min = Math.floor(seconds / 60);
+            const sec = Math.round(seconds % 60);
+            return `${min}m ${sec}s`;
+        }
+
+        // Format timestamp
+        function formatTime(isoString) {
+            if (!isoString) return '-';
+            const date = new Date(isoString);
+            return date.toLocaleTimeString();
+        }
+
+        // Render task list
+        function renderTasks(data) {
+            const container = document.getElementById('taskList');
+            const tasks = data.tasks || [];
+
+            if (tasks.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 6v6l4 2"></path>
+                        </svg>
+                        <p>No tasks yet</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Detect new tasks for highlighting
+            const currentIds = new Set(tasks.map(t => t.task_id));
+            const newIds = new Set([...currentIds].filter(id => !lastTaskIds.has(id)));
+            lastTaskIds = currentIds;
+
+            container.innerHTML = tasks.map(task => {
+                const isNew = newIds.has(task.task_id);
+                const isExpanded = expandedTaskId === task.task_id;
+
+                return `
+                    <div class="task-item ${isNew ? 'highlight' : ''}" data-task-id="${task.task_id}" onclick="toggleTaskDetails('${task.task_id}')">
+                        <div class="task-header">
+                            <div class="task-main">
+                                <span class="task-id">${task.task_id}</span>
+                                <span class="task-tool">${task.tool}</span>
+                            </div>
+                            <div class="task-meta">
+                                <span class="status-badge ${task.status}">${task.status}</span>
+                                <span class="task-progress">${task.progress}</span>
+                                <span class="task-duration">${formatDuration(task.duration_sec)}</span>
+                            </div>
+                        </div>
+                        ${isExpanded ? '<div class="task-details" id="details-' + task.task_id + '"><div class="spinner"></div> Loading...</div>' : ''}
+                    </div>
+                `;
+            }).join('');
+
+            // If a task was expanded, reload its details
+            if (expandedTaskId) {
+                loadTaskDetails(expandedTaskId);
+            }
+        }
+
+        // Toggle task details
+        async function toggleTaskDetails(taskId) {
+            if (expandedTaskId === taskId) {
+                expandedTaskId = null;
+                refresh();
+            } else {
+                expandedTaskId = taskId;
+                refresh();
+            }
+        }
+
+        // Load full task details
+        async function loadTaskDetails(taskId) {
+            const container = document.getElementById(`details-${taskId}`);
+            if (!container) return;
+
+            try {
+                const task = await fetchTaskDetails(taskId);
+
+                const progressPercent = task.progress.percent || 0;
+
+                container.innerHTML = `
+                    <div class="detail-row">
+                        <div class="detail-label">Task ID</div>
+                        <div class="detail-value mono">${task.task_id}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Progress</div>
+                        <div class="detail-value">${task.progress.message || 'No message'}</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${progressPercent}%"></div>
+                        </div>
+                        <div class="detail-value" style="font-size: 12px; color: var(--text-tertiary); margin-top: 4px;">
+                            ${progressPercent}% (${task.progress.current}/${task.progress.total})
+                        </div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Timestamps</div>
+                        <div class="timestamps">
+                            <div>
+                                <div style="font-size: 12px; color: var(--text-tertiary);">Created</div>
+                                <div class="detail-value">${formatTime(task.timestamps.created)}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 12px; color: var(--text-tertiary);">Started</div>
+                                <div class="detail-value">${formatTime(task.timestamps.started)}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 12px; color: var(--text-tertiary);">Completed</div>
+                                <div class="detail-value">${formatTime(task.timestamps.completed)}</div>
+                            </div>
+                        </div>
+                    </div>
+                    ${task.input ? `
+                    <div class="detail-row">
+                        <div class="detail-label">Input Parameters</div>
+                        <div class="detail-value mono">${JSON.stringify(task.input, null, 2)}</div>
+                    </div>
+                    ` : ''}
+                    ${task.result ? `
+                    <div class="detail-row">
+                        <div class="detail-label">Result (preview)</div>
+                        <div class="detail-value mono">${task.result}</div>
+                    </div>
+                    ` : ''}
+                    ${task.error ? `
+                    <div class="detail-row">
+                        <div class="detail-label">Error</div>
+                        <div class="detail-value mono" style="color: var(--status-failed);">${task.error}</div>
+                    </div>
+                    ` : ''}
+                    ${task.stage ? `
+                    <div class="detail-row">
+                        <div class="detail-label">Stage</div>
+                        <div class="detail-value">${task.stage}</div>
+                    </div>
+                    ` : ''}
+                `;
+            } catch (error) {
+                container.innerHTML = `
+                    <div class="detail-row">
+                        <div class="detail-value" style="color: var(--status-failed);">
+                            Failed to load details: ${error.message}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Main refresh function
+        async function refresh() {
+            try {
+                const [health, tasks] = await Promise.all([
+                    fetchHealth(),
+                    fetchTasks()
+                ]);
+
+                updateHealth(health);
+                renderTasks(tasks);
+            } catch (error) {
+                console.error('Refresh error:', error);
+                showOffline(error);
+
+                // Show error state in task list if this is the first load
+                if (lastTaskIds.size === 0) {
+                    document.getElementById('taskList').innerHTML = `
+                        <div class="error-state">
+                            <div class="status-dot offline"></div>
+                            <p><strong>Connection failed</strong></p>
+                            <p style="font-size: 14px; margin-top: 8px;">
+                                Make sure the daemon is running:<br>
+                                <code style="background: var(--bg-tertiary); padding: 4px 8px; border-radius: 4px; margin-top: 8px; display: inline-block;">
+                                    mcp-server-browser-use server
+                                </code>
+                            </p>
+                        </div>
+                    `;
+                }
+            }
+        }
+
+        // Auto-refresh
+        function startAutoRefresh() {
+            refresh();
+            refreshTimer = setInterval(refresh, REFRESH_INTERVAL);
+        }
+
+        function stopAutoRefresh() {
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+                refreshTimer = null;
+            }
+        }
+
+        // Initialize
+        document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+        initTheme();
+        startAutoRefresh();
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', stopAutoRefresh);
+
+        // Make toggleTaskDetails available globally
+        window.toggleTaskDetails = toggleTaskDetails;
+    </script>
+</body>
+</html>
