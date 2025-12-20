@@ -466,8 +466,8 @@ def serve() -> FastMCP:
             if recorder:
                 try:
                     await recorder.detach()
-                except Exception as e:
-                    logger.warning(f"Failed to detach recorder during cancellation: {e}", exc_info=True)
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to detach recorder during cancellation: {cleanup_error}", exc_info=True)
 
             if skill and skill_store:
                 skill_store.record_usage(skill.name, success=False)
@@ -482,8 +482,8 @@ def serve() -> FastMCP:
             if recorder:
                 try:
                     await recorder.detach()
-                except Exception as e:
-                    logger.warning(f"Failed to detach recorder during error cleanup: {e}", exc_info=True)
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to detach recorder during error cleanup: {cleanup_error}", exc_info=True)
 
             # Record failure if skill was used
             if skill and skill_store:
