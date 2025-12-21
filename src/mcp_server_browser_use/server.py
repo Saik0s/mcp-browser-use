@@ -345,6 +345,9 @@ def serve() -> FastMCP:
         if learn:
             recorder = SkillRecorder(task=task)
 
+        # Track recorder attachment for cleanup
+        recorder_attached = False
+
         try:
             agent = Agent(
                 task=augmented_task,
@@ -359,6 +362,7 @@ def serve() -> FastMCP:
                 await ctx.info("Attaching network recorder...")
                 await agent.browser_session.start()
                 await recorder.attach(agent.browser_session)
+                recorder_attached = True
                 logger.info("SkillRecorder attached via CDP for network capture")
 
             # Register task for cancellation support
@@ -405,9 +409,10 @@ def serve() -> FastMCP:
 
                 try:
                     # Finalize recorder and get full CDP recording
-                    if recorder:
+                    if recorder and recorder_attached:
                         await recorder.finalize()
                         await recorder.detach()
+                        recorder_attached = False  # Mark as detached
                         recording = recorder.get_recording(result=final)
                         api_count = recorder.api_call_count
                         await ctx.info(f"Captured {api_count} API calls for analysis")
@@ -462,13 +467,7 @@ def serve() -> FastMCP:
             return final_result
 
         except asyncio.CancelledError:
-            # Task was cancelled
-            if recorder:
-                try:
-                    await recorder.detach()
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to detach recorder during cancellation: {cleanup_error}", exc_info=True)
-
+            # Task was cancelled - record failure
             if skill and skill_store:
                 skill_store.record_usage(skill.name, success=False)
 
@@ -478,13 +477,6 @@ def serve() -> FastMCP:
             raise
 
         except Exception as e:
-            # Clean up recorder if attached
-            if recorder:
-                try:
-                    await recorder.detach()
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to detach recorder during error cleanup: {cleanup_error}", exc_info=True)
-
             # Record failure if skill was used
             if skill and skill_store:
                 skill_store.record_usage(skill.name, success=False)
@@ -496,6 +488,16 @@ def serve() -> FastMCP:
 
             logger.error(f"Browser agent failed: {e}")
             raise BrowserError(f"Browser automation failed: {e}") from e
+
+        finally:
+            # Ensure CDP listeners are always detached, even if exceptions occurred
+            if recorder and recorder_attached:
+                try:
+                    await recorder.detach()
+                    logger.info("CDP listeners detached successfully in finally block")
+                except Exception as cleanup_error:
+                    # Log exception but don't mask the original error
+                    logger.exception(f"Critical: Failed to detach CDP listeners in finally block: {cleanup_error}")
 
     @server.tool(task=TaskConfig(mode="optional"))
     async def run_deep_research(
