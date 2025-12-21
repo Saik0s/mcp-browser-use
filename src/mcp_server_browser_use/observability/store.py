@@ -133,28 +133,48 @@ class TaskStore:
         """Update task status and optionally result/error."""
         await self.initialize()
 
+        # Whitelist of allowed column assignments to prevent SQL injection
+        ALLOWED_UPDATES = {
+            "status = ?",
+            "started_at = COALESCE(started_at, ?)",
+            "completed_at = ?",
+            "result = ?",
+            "error = ?",
+        }
+
         async with aiosqlite.connect(self.db_path) as db:
             updates = ["status = ?"]
             params: list = [status.value]
 
             if status == TaskStatus.RUNNING:
                 # Only set started_at if it's currently NULL
-                updates.append("started_at = COALESCE(started_at, ?)")
+                update_clause = "started_at = COALESCE(started_at, ?)"
+                updates.append(update_clause)
                 params.append(datetime.now(UTC).isoformat())
             elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
-                updates.append("completed_at = ?")
+                update_clause = "completed_at = ?"
+                updates.append(update_clause)
                 params.append(datetime.now(UTC).isoformat())
 
             if result is not None:
-                updates.append("result = ?")
+                update_clause = "result = ?"
+                updates.append(update_clause)
                 params.append(result[:10000] if result else None)  # Truncate long results
             if error is not None:
-                updates.append("error = ?")
+                update_clause = "error = ?"
+                updates.append(update_clause)
                 params.append(error[:2000] if error else None)  # Truncate long errors
+
+            # Validate all updates are from whitelist
+            for update in updates:
+                if update not in ALLOWED_UPDATES:
+                    raise ValueError(f"Invalid SQL update clause: {update}")
 
             params.append(task_id)
 
-            await db.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE task_id = ?", params)
+            # Build query safely with validated column assignments
+            query = "UPDATE tasks SET " + ", ".join(updates) + " WHERE task_id = ?"
+            await db.execute(query, params)
             await db.commit()
 
     async def get_task(self, task_id: str) -> TaskRecord | None:
