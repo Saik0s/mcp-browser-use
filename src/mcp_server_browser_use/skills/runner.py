@@ -449,6 +449,15 @@ class SkillRunner:
             SkillRunResult with response data
         """
         url = request.build_url(params)
+
+        # CRITICAL: Re-validate URL immediately before fetch to prevent DNS rebinding (TOCTOU)
+        # DNS could have been rebound from public to private IP since initial validation
+        try:
+            await validate_url_safe(url)
+        except ValueError as e:
+            logger.error(f"SSRF protection: URL validation failed at fetch time: {e}")
+            return SkillRunResult(success=False, error=f"SSRF blocked at fetch time: {e}")
+
         options = request.to_fetch_options(params)
 
         # Build JavaScript fetch code
