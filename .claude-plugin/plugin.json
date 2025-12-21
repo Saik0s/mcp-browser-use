@@ -1,7 +1,7 @@
 {
   "name": "mcp-browser-use",
-  "version": "1.0.0",
-  "description": "Browser automation via Model Context Protocol - AI-driven web interactions",
+  "version": "0.3.0",
+  "description": "Browser automation via MCP - wraps browser-use for AI-driven browser control",
   "author": {
     "name": "Igor Tarasenko"
   },
@@ -9,6 +9,11 @@
   "repository": "https://github.com/browser-use/mcp-browser-use",
   "license": "MIT",
   "keywords": ["browser", "automation", "mcp", "playwright", "ai"],
-  "mcpServers": "../.mcp.json",
-  "hooks": "../hooks/hooks.json"
+  "skills": [
+    "skills/browser-server.md"
+  ],
+  "hooks": {
+    "SessionStart": "hooks/SessionStart.py"
+  },
+  "mcpServers": "../.mcp.json"
 }
