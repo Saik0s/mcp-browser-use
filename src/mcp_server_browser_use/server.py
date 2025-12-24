@@ -922,6 +922,88 @@ def serve() -> FastMCP:
 
         return JSONResponse(json.loads(result))
 
+    # REST API endpoints for skills
+    def _get_skill_store() -> SkillStore | None:
+        """Get skill store instance if skills are enabled."""
+        if settings.skills.enabled:
+            return SkillStore(directory=settings.skills.directory)
+        return None
+
+    @server.custom_route(path="/api/skills", methods=["GET"])
+    async def api_skills(request):
+        """REST endpoint for skills list."""
+
+        from starlette.responses import JSONResponse
+
+        store = _get_skill_store()
+        if not store:
+            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+
+        try:
+            skills = store.list_all()
+            return JSONResponse(
+                {
+                    "skills": [
+                        {
+                            "name": s.name,
+                            "description": s.description,
+                            "success_rate": round(s.success_rate * 100, 1),
+                            "usage_count": s.success_count + s.failure_count,
+                            "last_used": s.last_used.isoformat() if s.last_used else None,
+                        }
+                        for s in skills
+                    ],
+                    "count": len(skills),
+                    "skills_directory": str(store.directory),
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to list skills: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @server.custom_route(path="/api/skills/{name}", methods=["GET"])
+    async def api_skill_get(request):
+        """REST endpoint for skill details."""
+
+        from starlette.responses import JSONResponse
+
+        store = _get_skill_store()
+        if not store:
+            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+
+        skill_name = request.path_params["name"]
+
+        try:
+            skill = store.load(skill_name)
+            if not skill:
+                return JSONResponse({"error": f"Skill '{skill_name}' not found"}, status_code=404)
+
+            # Return skill as JSON (convert from dict representation)
+            skill_dict = skill.to_dict()
+            return JSONResponse(skill_dict)
+        except Exception as e:
+            logger.error(f"Failed to get skill {skill_name}: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @server.custom_route(path="/api/skills/{name}", methods=["DELETE"])
+    async def api_skill_delete(request):
+        """REST endpoint for skill deletion."""
+        from starlette.responses import JSONResponse
+
+        store = _get_skill_store()
+        if not store:
+            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+
+        skill_name = request.path_params["name"]
+
+        try:
+            if store.delete(skill_name):
+                return JSONResponse({"success": True, "message": f"Skill '{skill_name}' deleted successfully"})
+            return JSONResponse({"error": f"Skill '{skill_name}' not found"}, status_code=404)
+        except Exception as e:
+            logger.error(f"Failed to delete skill {skill_name}: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     return server
 
 
