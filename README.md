@@ -11,12 +11,14 @@ MCP server that gives AI assistants the power to control a web browser.
 - [What is this?](#what-is-this)
 - [Installation](#installation)
 - [Web UI](#web-ui)
+- [Web Dashboard](#web-dashboard)
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
 - [MCP Tools](#mcp-tools)
 - [Deep Research](#deep-research)
 - [Observability](#observability)
 - [Skills System](#skills-system-super-alpha)
+- [REST API Reference](#rest-api-reference)
 - [Architecture](#architecture)
 - [License](#license)
 
@@ -116,6 +118,26 @@ Access the task viewer at http://localhost:8383 when the daemon is running.
 - Running tasks monitoring
 
 The web UI provides visibility into browser automation tasks without requiring CLI commands.
+
+---
+
+## Web Dashboard
+
+Access the full-featured dashboard at http://localhost:8383/dashboard when the daemon is running.
+
+**Features:**
+- **Tasks Tab:** Complete task history with filtering, real-time status updates, and detailed execution logs
+- **Skills Tab:** Browse, inspect, and manage learned skills with usage statistics
+- **History Tab:** Historical view of all completed tasks with filtering by status and time
+
+**Key Capabilities:**
+- Run existing skills directly from the dashboard with custom parameters
+- Start learning sessions to capture new skills
+- Delete outdated or invalid skills
+- Monitor running tasks with live progress updates
+- View full task results and error details
+
+The dashboard provides a comprehensive web interface for managing all aspects of browser automation without CLI commands.
 
 ---
 
@@ -240,6 +262,8 @@ mcp-server-browser-use call skill_list
 mcp-server-browser-use call skill_get name="my-skill"
 mcp-server-browser-use call skill_delete name="my-skill"
 ```
+
+**Tip:** Skills can also be managed through the web dashboard at http://localhost:8383/dashboard for a visual interface with one-click execution and learning sessions.
 
 ---
 
@@ -547,6 +571,192 @@ The system will navigate to the recovery page (letting you log in) and retry.
 - **Auth State:** Skills rely on browser cookies. If you're logged out, they may fail.
 - **API Changes:** If a site changes their API, the skill breaks. Falls back to hint-based execution.
 - **Complex Flows:** Multi-step workflows (login → navigate → search) may not capture cleanly.
+
+---
+
+## REST API Reference
+
+The server exposes REST endpoints for direct HTTP access. All endpoints return JSON unless otherwise specified.
+
+### Base URL
+
+```
+http://localhost:8383
+```
+
+### Health & Status
+
+**GET /api/health**
+
+Server health check with running task information.
+
+```bash
+curl http://localhost:8383/api/health
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "uptime_seconds": 1234.5,
+  "memory_mb": 256.7,
+  "running_tasks": 2,
+  "tasks": [...],
+  "stats": {...}
+}
+```
+
+### Tasks
+
+**GET /api/tasks**
+
+List recent tasks with optional filtering.
+
+```bash
+# List all tasks
+curl http://localhost:8383/api/tasks
+
+# Filter by status
+curl http://localhost:8383/api/tasks?status=running
+
+# Limit results
+curl http://localhost:8383/api/tasks?limit=50
+```
+
+**GET /api/tasks/{task_id}**
+
+Get full details of a specific task.
+
+```bash
+curl http://localhost:8383/api/tasks/abc123
+```
+
+**GET /api/tasks/{task_id}/logs** (SSE)
+
+Real-time task progress stream via Server-Sent Events.
+
+```javascript
+const events = new EventSource('/api/tasks/abc123/logs');
+events.onmessage = (e) => console.log(JSON.parse(e.data));
+```
+
+### Skills
+
+**GET /api/skills**
+
+List all available skills.
+
+```bash
+curl http://localhost:8383/api/skills
+```
+
+Response:
+```json
+{
+  "skills": [
+    {
+      "name": "npm-search",
+      "description": "Search for packages on npmjs.com",
+      "success_rate": 92.5,
+      "usage_count": 15,
+      "last_used": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "count": 1,
+  "skills_directory": "/Users/you/.config/browser-skills"
+}
+```
+
+**GET /api/skills/{name}**
+
+Get full skill definition as JSON.
+
+```bash
+curl http://localhost:8383/api/skills/npm-search
+```
+
+**DELETE /api/skills/{name}**
+
+Delete a skill.
+
+```bash
+curl -X DELETE http://localhost:8383/api/skills/npm-search
+```
+
+**POST /api/skills/{name}/run**
+
+Execute a skill with parameters (starts background task).
+
+```bash
+curl -X POST http://localhost:8383/api/skills/npm-search/run \
+  -H "Content-Type: application/json" \
+  -d '{"params": {"query": "react"}}'
+```
+
+Response:
+```json
+{
+  "task_id": "abc123...",
+  "skill_name": "npm-search",
+  "message": "Skill execution started",
+  "status_url": "/api/tasks/abc123..."
+}
+```
+
+**POST /api/learn**
+
+Start a learning session to capture a new skill (starts background task).
+
+```bash
+curl -X POST http://localhost:8383/api/learn \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "Search for TypeScript packages on npmjs.com",
+    "skill_name": "npm-search"
+  }'
+```
+
+Response:
+```json
+{
+  "task_id": "def456...",
+  "learning_task": "Search for TypeScript packages on npmjs.com",
+  "skill_name": "npm-search",
+  "message": "Learning session started",
+  "status_url": "/api/tasks/def456..."
+}
+```
+
+### Real-Time Updates
+
+**GET /api/events** (SSE)
+
+Server-Sent Events stream for all task updates.
+
+```javascript
+const events = new EventSource('/api/events');
+events.onmessage = (e) => {
+  const data = JSON.parse(e.data);
+  console.log(`Task ${data.task_id}: ${data.status}`);
+};
+```
+
+Event format:
+```json
+{
+  "task_id": "abc123",
+  "full_task_id": "abc123-full-uuid...",
+  "tool": "run_browser_agent",
+  "status": "running",
+  "stage": "navigating",
+  "progress": {
+    "current": 5,
+    "total": 15,
+    "percent": 33.3,
+    "message": "Loading page..."
+  }
+}
+```
 
 ---
 
