@@ -373,6 +373,183 @@
             color: white;
         }
 
+        /* Skill Table */
+        .skill-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .skill-row {
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .skill-row:hover {
+            background: var(--bg-secondary);
+        }
+
+        .skill-row td {
+            padding: 16px 20px;
+        }
+
+        .skill-row:last-child {
+            border-bottom: none;
+        }
+
+        .skill-name-cell {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .skill-desc-cell {
+            color: var(--text-secondary);
+            font-size: 14px;
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .skill-stats {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            font-size: 13px;
+            color: var(--text-tertiary);
+        }
+
+        .success-rate {
+            color: var(--status-completed);
+            font-weight: 500;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            max-width: 700px;
+            width: 100%;
+            max-height: 90vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--shadow-md);
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .modal-footer {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        .skill-detail-section {
+            margin-bottom: 20px;
+        }
+
+        .skill-detail-section h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .skill-detail-value {
+            font-size: 14px;
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .skill-detail-code {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 12px;
+            font-family: "SF Mono", Monaco, monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+            border: none;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-tertiary);
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .header-content {
@@ -421,7 +598,7 @@
                 <li class="tab active" hx-get="/api/tasks?limit=20" hx-target="#content" hx-trigger="click" onclick="setActiveTab(this)">
                     Tasks
                 </li>
-                <li class="tab" hx-get="#skills-placeholder" hx-target="#content" hx-trigger="click" hx-swap="innerHTML" onclick="setActiveTab(this)">
+                <li class="tab" hx-get="/api/skills" hx-target="#content" hx-trigger="click" onclick="setActiveTab(this)">
                     Skills
                 </li>
                 <li class="tab" hx-get="#history-placeholder" hx-target="#content" hx-trigger="click" hx-swap="innerHTML" onclick="setActiveTab(this)">
@@ -538,7 +715,7 @@
             }
         });
 
-        // Render tasks from API response
+        // Render tasks and skills from API response
         document.body.addEventListener('htmx:afterOnLoad', (event) => {
             if (event.detail.xhr.responseURL.includes('/api/tasks')) {
                 try {
@@ -546,6 +723,13 @@
                     renderTasks(data);
                 } catch (error) {
                     console.error('Failed to parse tasks:', error);
+                }
+            } else if (event.detail.xhr.responseURL.includes('/api/skills') && !event.detail.xhr.responseURL.match(/\/api\/skills\/[^\/]+$/)) {
+                try {
+                    const data = JSON.parse(event.detail.xhr.response);
+                    renderSkills(data);
+                } catch (error) {
+                    console.error('Failed to parse skills:', error);
                 }
             }
         });
@@ -588,6 +772,234 @@
             });
 
             content.innerHTML = html;
+        }
+
+        function renderSkills(data) {
+            const skills = data.skills || [];
+            const content = document.getElementById('content');
+
+            if (data.error) {
+                content.innerHTML = `
+                    <div class="panel-header">
+                        <div class="panel-title">Browser Skills</div>
+                    </div>
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <p><strong>${escapeHtml(data.error)}</strong></p>
+                        <p style="font-size: 14px; margin-top: 8px;">Skills feature may be disabled in config</p>
+                    </div>
+                `;
+                return;
+            }
+
+            if (skills.length === 0) {
+                content.innerHTML = `
+                    <div class="panel-header">
+                        <div class="panel-title">Browser Skills</div>
+                    </div>
+                    <div class="empty-state">
+                        <div class="empty-icon">🎯</div>
+                        <p>No skills learned yet</p>
+                        <p style="font-size: 14px; margin-top: 8px;">Skills are created automatically during browser automation</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<div class="panel-header"><div class="panel-title">Browser Skills</div></div>';
+            html += '<table class="skill-table">';
+
+            skills.forEach(skill => {
+                const lastUsed = skill.last_used ? new Date(skill.last_used).toLocaleDateString() : 'Never';
+                html += `
+                    <tr class="skill-row" onclick="showSkillDetail('${escapeHtml(skill.name)}')">
+                        <td>
+                            <div class="skill-name-cell">${escapeHtml(skill.name)}</div>
+                            <div class="skill-desc-cell">${escapeHtml(skill.description || 'No description')}</div>
+                        </td>
+                        <td>
+                            <div class="skill-stats">
+                                <span class="success-rate">${skill.success_rate}%</span>
+                                <span>${skill.usage_count} uses</span>
+                                <span>Last: ${lastUsed}</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += '</table>';
+            content.innerHTML = html;
+        }
+
+        async function showSkillDetail(skillName) {
+            const modal = document.getElementById('skill-modal');
+            modal.innerHTML = `
+                <div class="modal-overlay" onclick="closeSkillModal(event)">
+                    <div class="modal" onclick="event.stopPropagation()">
+                        <div class="modal-header">
+                            <div class="modal-title">Loading skill...</div>
+                            <button class="modal-close" onclick="closeSkillModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                                <p>Loading skill details...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            modal.style.display = 'block';
+
+            try {
+                const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load skill: ${response.statusText}`);
+                }
+
+                const skill = await response.json();
+                renderSkillDetail(skill);
+            } catch (error) {
+                console.error('Failed to load skill:', error);
+                modal.innerHTML = `
+                    <div class="modal-overlay" onclick="closeSkillModal(event)">
+                        <div class="modal" onclick="event.stopPropagation()">
+                            <div class="modal-header">
+                                <div class="modal-title">Error</div>
+                                <button class="modal-close" onclick="closeSkillModal()">&times;</button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="empty-state">
+                                    <div class="empty-icon">⚠️</div>
+                                    <p><strong>Failed to load skill</strong></p>
+                                    <p style="font-size: 14px; margin-top: 8px;">${escapeHtml(error.message)}</p>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-secondary" onclick="closeSkillModal()">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function renderSkillDetail(skill) {
+            const modal = document.getElementById('skill-modal');
+            const successRate = skill.success_rate ? (skill.success_rate * 100).toFixed(1) : 0;
+            const usageCount = (skill.success_count || 0) + (skill.failure_count || 0);
+            const lastUsed = skill.last_used ? new Date(skill.last_used).toLocaleString() : 'Never';
+
+            let actionsHtml = '';
+            if (skill.actions && skill.actions.length > 0) {
+                actionsHtml = skill.actions.map((action, idx) =>
+                    `<div>${idx + 1}. ${escapeHtml(JSON.stringify(action))}</div>`
+                ).join('');
+            } else {
+                actionsHtml = '<div>No actions defined</div>';
+            }
+
+            modal.innerHTML = `
+                <div class="modal-overlay" onclick="closeSkillModal(event)">
+                    <div class="modal" onclick="event.stopPropagation()">
+                        <div class="modal-header">
+                            <div class="modal-title">${escapeHtml(skill.name)}</div>
+                            <button class="modal-close" onclick="closeSkillModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="skill-detail-section">
+                                <h3>Description</h3>
+                                <div class="skill-detail-value">${escapeHtml(skill.description || 'No description')}</div>
+                            </div>
+
+                            <div class="skill-detail-section">
+                                <h3>Statistics</h3>
+                                <div class="skill-detail-value">
+                                    <div>Success Rate: <strong class="success-rate">${successRate}%</strong></div>
+                                    <div>Total Uses: <strong>${usageCount}</strong></div>
+                                    <div>Successes: <strong>${skill.success_count || 0}</strong></div>
+                                    <div>Failures: <strong>${skill.failure_count || 0}</strong></div>
+                                    <div>Last Used: <strong>${lastUsed}</strong></div>
+                                </div>
+                            </div>
+
+                            ${skill.url ? `
+                            <div class="skill-detail-section">
+                                <h3>URL Pattern</h3>
+                                <div class="skill-detail-code">${escapeHtml(skill.url)}</div>
+                            </div>
+                            ` : ''}
+
+                            <div class="skill-detail-section">
+                                <h3>Actions</h3>
+                                <div class="skill-detail-code">${actionsHtml}</div>
+                            </div>
+
+                            ${skill.success_indicators && skill.success_indicators.length > 0 ? `
+                            <div class="skill-detail-section">
+                                <h3>Success Indicators</h3>
+                                <div class="skill-detail-code">${escapeHtml(JSON.stringify(skill.success_indicators, null, 2))}</div>
+                            </div>
+                            ` : ''}
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="closeSkillModal()">Close</button>
+                            <button class="btn btn-danger" onclick="confirmDeleteSkill('${escapeHtml(skill.name)}')">Delete Skill</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function closeSkillModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            const modal = document.getElementById('skill-modal');
+            modal.style.display = 'none';
+            modal.innerHTML = '';
+        }
+
+        function confirmDeleteSkill(skillName) {
+            const modal = document.getElementById('skill-modal');
+            modal.innerHTML = `
+                <div class="modal-overlay" onclick="closeSkillModal(event)">
+                    <div class="modal" onclick="event.stopPropagation()">
+                        <div class="modal-header">
+                            <div class="modal-title">Confirm Delete</div>
+                            <button class="modal-close" onclick="closeSkillModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p>Are you sure you want to delete the skill <strong>${escapeHtml(skillName)}</strong>?</p>
+                            <p style="font-size: 14px; color: var(--text-secondary); margin-top: 8px;">This action cannot be undone.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="closeSkillModal()">Cancel</button>
+                            <button class="btn btn-danger" onclick="deleteSkill('${escapeHtml(skillName)}')">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function deleteSkill(skillName) {
+            try {
+                const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to delete skill: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                closeSkillModal();
+
+                // Refresh the skills list
+                htmx.ajax('GET', '/api/skills', { target: '#content' });
+            } catch (error) {
+                console.error('Failed to delete skill:', error);
+                alert(`Failed to delete skill: ${error.message}`);
+            }
         }
 
         function formatDuration(seconds) {
@@ -647,5 +1059,8 @@
             <p style="font-size: 14px; margin-top: 8px;">This will show completed task analytics</p>
         </div>
     </template>
+
+    <!-- Modal container for skill details -->
+    <div id="skill-modal" style="display: none;"></div>
 </body>
 </html>
