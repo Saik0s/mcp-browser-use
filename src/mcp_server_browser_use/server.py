@@ -869,7 +869,7 @@ def serve() -> FastMCP:
         from starlette.responses import FileResponse
 
         # Get the path to the viewer.html file
-        viewer_path = Path(__file__).parent.parent.parent / "ui" / "viewer.html"
+        viewer_path = Path(__file__).parent / "ui" / "viewer.html"
 
         if not viewer_path.exists():
             from starlette.responses import Response
@@ -887,7 +887,7 @@ def serve() -> FastMCP:
         """Serve the dashboard UI for task/skill management."""
         from starlette.responses import FileResponse
 
-        dashboard_path = Path(__file__).parent.parent.parent / "ui" / "dashboard.html"
+        dashboard_path = Path(__file__).parent / "ui" / "dashboard.html"
 
         if not dashboard_path.exists():
             from starlette.responses import Response

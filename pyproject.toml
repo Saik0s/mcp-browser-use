@@ -75,7 +75,6 @@ ignore = [
     "B008",    # allow function calls in defaults (Typer pattern)
     "B904",    # allow raise without from in except (Typer Exit pattern)
     "RUF022",  # allow unsorted __all__ (logical grouping)
-    "UP038",   # allow isinstance tuple (more readable than union)
 ]
 fixable = ["ALL"]
 
