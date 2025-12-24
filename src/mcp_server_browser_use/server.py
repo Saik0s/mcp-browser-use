@@ -1022,6 +1022,278 @@ def serve() -> FastMCP:
             logger.error(f"Failed to delete skill {skill_name}: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    @server.custom_route(path="/api/skills/{name}/run", methods=["POST"])
+    async def api_skill_run(request):
+        """REST endpoint for skill execution.
+
+        Request body:
+        {
+            "url": "https://example.com",  # Optional - can be part of task description
+            "params": {...}                 # Optional skill parameters
+        }
+
+        Returns:
+        {
+            "task_id": "abc123...",
+            "message": "Skill execution started"
+        }
+        """
+        from starlette.responses import JSONResponse
+
+        if not settings.skills.enabled:
+            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+
+        skill_name = request.path_params["name"]
+
+        try:
+            body = await request.json()
+        except Exception as e:
+            return JSONResponse({"error": f"Invalid JSON body: {e}"}, status_code=400)
+
+        url = body.get("url", "")
+        params = body.get("params", {})
+
+        # Build task description
+        task_desc = f"Use the {skill_name} skill"
+        if url:
+            task_desc += f" at {url}"
+
+        # Create task ID for tracking
+        task_id = str(uuid.uuid4())
+        task_store = get_task_store()
+        task_record = TaskRecord(
+            task_id=task_id,
+            tool_name=f"skill_run:{skill_name}",
+            status=TaskStatus.PENDING,
+            input_params={"skill_name": skill_name, "url": url, "params": params},
+        )
+        await task_store.create_task(task_record)
+
+        # Start execution in background
+        async def execute_skill() -> None:
+            """Background task to execute the skill."""
+            bind_task_context(task_id, f"skill_run:{skill_name}")
+            task_logger = get_task_logger()
+
+            try:
+                llm, profile = _get_llm_and_profile()
+            except LLMProviderError as e:
+                logger.error(f"LLM initialization failed: {e}")
+                await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+                clear_task_context()
+                return
+
+            await task_store.update_status(task_id, TaskStatus.RUNNING)
+            task_logger.info("task_running")
+
+            try:
+                # Build agent with skill hints
+                augmented_task = task_desc
+                if skill_store:
+                    skill = skill_store.load(skill_name)
+                    if skill and skill_executor:
+                        merged_params = skill.merge_params(params)
+                        augmented_task = skill_executor.inject_hints(task_desc, skill, merged_params)
+
+                agent = Agent(
+                    task=augmented_task,
+                    llm=llm,
+                    browser_profile=profile,
+                    max_steps=settings.agent.max_steps,
+                )
+
+                # Register for cancellation
+                agent_task = asyncio.create_task(agent.run())
+                _running_tasks[task_id] = agent_task
+
+                try:
+                    result = await agent_task
+                finally:
+                    _running_tasks.pop(task_id, None)
+
+                final = result.final_result() or "Task completed without explicit result."
+
+                # Record usage
+                if skill_store:
+                    skill_store.record_usage(skill_name, success=True)
+
+                await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final)
+                task_logger.info("task_completed", result_length=len(final))
+
+            except Exception as e:
+                if skill_store:
+                    skill_store.record_usage(skill_name, success=False)
+                await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+                task_logger.error("task_failed", error=str(e))
+                logger.error(f"Skill {skill_name} execution failed: {e}")
+
+            finally:
+                clear_task_context()
+
+        # Start background task and keep reference to prevent garbage collection
+        bg_task = asyncio.create_task(execute_skill())
+        # Store task reference to prevent GC
+        _running_tasks[f"{task_id}_bg"] = bg_task
+
+        return JSONResponse(
+            {
+                "task_id": task_id,
+                "skill_name": skill_name,
+                "message": "Skill execution started",
+                "status_url": f"/api/tasks/{task_id}",
+            },
+            status_code=202,
+        )
+
+    @server.custom_route(path="/api/learn", methods=["POST"])
+    async def api_learn(request):
+        """REST endpoint for learning mode.
+
+        Request body:
+        {
+            "task": "Learn how to search on GitHub",
+            "skill_name": "github_search"  # Optional - name to save learned skill
+        }
+
+        Returns:
+        {
+            "task_id": "abc123...",
+            "message": "Learning session started"
+        }
+        """
+        from starlette.responses import JSONResponse
+
+        if not settings.skills.enabled:
+            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+
+        try:
+            body = await request.json()
+        except Exception as e:
+            return JSONResponse({"error": f"Invalid JSON body: {e}"}, status_code=400)
+
+        task_description = body.get("task")
+        if not task_description:
+            return JSONResponse({"error": "Missing required field: task"}, status_code=400)
+
+        skill_name = body.get("skill_name")
+
+        # Create task ID for tracking
+        task_id = str(uuid.uuid4())
+        task_store = get_task_store()
+        task_record = TaskRecord(
+            task_id=task_id,
+            tool_name="learn",
+            status=TaskStatus.PENDING,
+            input_params={"task": task_description, "skill_name": skill_name},
+        )
+        await task_store.create_task(task_record)
+
+        # Start learning in background
+        async def execute_learn() -> None:
+            """Background task to execute learning mode."""
+            bind_task_context(task_id, "learn")
+            task_logger = get_task_logger()
+
+            try:
+                llm, profile = _get_llm_and_profile()
+            except LLMProviderError as e:
+                logger.error(f"LLM initialization failed: {e}")
+                await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+                clear_task_context()
+                return
+
+            await task_store.update_status(task_id, TaskStatus.RUNNING)
+            task_logger.info("task_running")
+
+            try:
+                # Inject learning mode instructions
+                augmented_task = task_description
+                if skill_executor:
+                    augmented_task = skill_executor.inject_learning_mode(task_description)
+
+                # Initialize recorder for learning mode
+                recorder = SkillRecorder(task=task_description)
+
+                agent = Agent(
+                    task=augmented_task,
+                    llm=llm,
+                    browser_profile=profile,
+                    max_steps=settings.agent.max_steps,
+                )
+
+                # Attach recorder to CDP
+                await agent.browser_session.start()
+                await recorder.attach(agent.browser_session)
+                recorder_attached = True
+
+                # Register for cancellation
+                agent_task = asyncio.create_task(agent.run())
+                _running_tasks[task_id] = agent_task
+
+                try:
+                    result = await agent_task
+                finally:
+                    _running_tasks.pop(task_id, None)
+
+                final = result.final_result() or "Task completed without explicit result."
+
+                # Extract skill from execution
+                skill_extraction_result = ""
+                if final and skill_name and skill_store:
+                    try:
+                        await recorder.finalize()
+                        await recorder.detach()
+                        recorder_attached = False
+
+                        recording = recorder.get_recording(result=final)
+
+                        # Analyze with LLM
+                        analyzer = SkillAnalyzer(llm)
+                        extracted_skill = await analyzer.analyze(recording)
+
+                        if extracted_skill:
+                            extracted_skill.name = skill_name
+                            skill_store.save(extracted_skill)
+                            skill_extraction_result = f"\n\n[SKILL LEARNED] Saved as '{skill_name}'"
+                            logger.info(f"Skill extracted and saved: {skill_name}")
+                        else:
+                            skill_extraction_result = "\n\n[SKILL NOT LEARNED] Could not extract API from execution"
+
+                    except Exception as e:
+                        logger.error(f"Skill extraction failed: {e}")
+                        skill_extraction_result = f"\n\n[SKILL EXTRACTION ERROR] {e}"
+                    finally:
+                        if recorder_attached:
+                            await recorder.detach()
+
+                final_result = final + skill_extraction_result
+                await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final_result)
+                task_logger.info("task_completed", result_length=len(final_result))
+
+            except Exception as e:
+                await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+                task_logger.error("task_failed", error=str(e))
+                logger.error(f"Learning session failed: {e}")
+
+            finally:
+                clear_task_context()
+
+        # Start background task and keep reference to prevent garbage collection
+        bg_task = asyncio.create_task(execute_learn())
+        # Store task reference to prevent GC
+        _running_tasks[f"{task_id}_bg"] = bg_task
+
+        return JSONResponse(
+            {
+                "task_id": task_id,
+                "learning_task": task_description,
+                "skill_name": skill_name,
+                "message": "Learning session started",
+                "status_url": f"/api/tasks/{task_id}",
+            },
+            status_code=202,
+        )
+
     return server
 
 
