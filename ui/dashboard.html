@@ -550,6 +550,139 @@
             background: var(--bg-tertiary);
         }
 
+        /* Filter Controls */
+        .filter-container {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .filter-label {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .filter-select {
+            padding: 6px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 14px;
+            min-width: 140px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-select:hover {
+            border-color: var(--accent);
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.1);
+        }
+
+        .filter-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 8px;
+        }
+
+        /* Stats Summary */
+        .stats-summary {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .stat-card {
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .stat-subtext {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-top: 2px;
+        }
+
+        /* Pagination */
+        .pagination {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .pagination-info {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .pagination-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .pagination-btn {
+            padding: 6px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .pagination-btn:hover:not(:disabled) {
+            background: var(--bg-tertiary);
+            border-color: var(--accent);
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination-btn.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .header-content {
@@ -571,6 +704,25 @@
 
             .tab {
                 white-space: nowrap;
+            }
+
+            .filter-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .filter-actions {
+                margin-left: 0;
+                width: 100%;
+            }
+
+            .stats-summary {
+                grid-template-columns: 1fr;
+            }
+
+            .pagination {
+                flex-direction: column;
+                gap: 12px;
             }
         }
     </style>
@@ -601,7 +753,7 @@
                 <li class="tab" hx-get="/api/skills" hx-target="#content" hx-trigger="click" onclick="setActiveTab(this)">
                     Skills
                 </li>
-                <li class="tab" hx-get="#history-placeholder" hx-target="#content" hx-trigger="click" hx-swap="innerHTML" onclick="setActiveTab(this)">
+                <li class="tab" onclick="setActiveTab(this); loadHistory()">
                     History
                 </li>
             </ul>
@@ -1020,6 +1172,318 @@
                 .replace(/'/g, "&#039;");
         }
 
+        // History Tab State
+        let historyState = {
+            statusFilter: 'all',
+            dateFilter: 'all',
+            toolFilter: 'all',
+            currentPage: 1,
+            pageSize: 20,
+            allTasks: [],
+            filteredTasks: []
+        };
+
+        async function loadHistory() {
+            const content = document.getElementById('content');
+            content.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading history...</p></div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/tasks?limit=1000`);
+                if (!response.ok) throw new Error('Failed to load tasks');
+
+                const data = await response.json();
+                historyState.allTasks = data.tasks || [];
+                historyState.currentPage = 1;
+                applyHistoryFilters();
+                renderHistory();
+            } catch (error) {
+                console.error('Failed to load history:', error);
+                content.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <p><strong>Failed to load history</strong></p>
+                        <p style="font-size: 14px; margin-top: 8px;">${escapeHtml(error.message)}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function applyHistoryFilters() {
+            let filtered = [...historyState.allTasks];
+
+            // Status filter
+            if (historyState.statusFilter !== 'all') {
+                filtered = filtered.filter(task => task.status === historyState.statusFilter);
+            }
+
+            // Date filter
+            if (historyState.dateFilter !== 'all') {
+                const now = Date.now();
+                const cutoff = historyState.dateFilter === 'today' ? 24 * 60 * 60 * 1000
+                    : historyState.dateFilter === 'week' ? 7 * 24 * 60 * 60 * 1000
+                    : 30 * 24 * 60 * 60 * 1000;
+
+                filtered = filtered.filter(task => {
+                    const taskTime = new Date(task.created_at).getTime();
+                    return (now - taskTime) <= cutoff;
+                });
+            }
+
+            // Tool filter
+            if (historyState.toolFilter !== 'all') {
+                filtered = filtered.filter(task => task.tool === historyState.toolFilter);
+            }
+
+            historyState.filteredTasks = filtered;
+        }
+
+        function renderHistory() {
+            const content = document.getElementById('content');
+
+            // Get unique tools for filter dropdown
+            const uniqueTools = [...new Set(historyState.allTasks.map(t => t.tool))].sort();
+
+            // Calculate stats
+            const stats = calculateHistoryStats();
+
+            // Pagination
+            const totalTasks = historyState.filteredTasks.length;
+            const totalPages = Math.ceil(totalTasks / historyState.pageSize);
+            const startIdx = (historyState.currentPage - 1) * historyState.pageSize;
+            const endIdx = Math.min(startIdx + historyState.pageSize, totalTasks);
+            const pageTasks = historyState.filteredTasks.slice(startIdx, endIdx);
+
+            let html = `
+                <div class="panel-header">
+                    <div class="panel-title">Task History</div>
+                </div>
+
+                <div class="stats-summary">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Tasks</div>
+                        <div class="stat-value">${stats.total}</div>
+                        <div class="stat-subtext">${historyState.filteredTasks.length} filtered</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Success Rate</div>
+                        <div class="stat-value">${stats.successRate}%</div>
+                        <div class="stat-subtext">${stats.completed} completed</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Avg Duration</div>
+                        <div class="stat-value">${stats.avgDuration}</div>
+                        <div class="stat-subtext">${stats.totalDuration} total</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Failed Tasks</div>
+                        <div class="stat-value">${stats.failed}</div>
+                        <div class="stat-subtext">${stats.cancelled} cancelled</div>
+                    </div>
+                </div>
+
+                <div class="filter-container">
+                    <div class="filter-group">
+                        <label class="filter-label">Status</label>
+                        <select class="filter-select" id="statusFilter" onchange="updateHistoryFilter('status', this.value)">
+                            <option value="all" ${historyState.statusFilter === 'all' ? 'selected' : ''}>All Statuses</option>
+                            <option value="completed" ${historyState.statusFilter === 'completed' ? 'selected' : ''}>Completed</option>
+                            <option value="failed" ${historyState.statusFilter === 'failed' ? 'selected' : ''}>Failed</option>
+                            <option value="cancelled" ${historyState.statusFilter === 'cancelled' ? 'selected' : ''}>Cancelled</option>
+                            <option value="running" ${historyState.statusFilter === 'running' ? 'selected' : ''}>Running</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label">Date Range</label>
+                        <select class="filter-select" id="dateFilter" onchange="updateHistoryFilter('date', this.value)">
+                            <option value="all" ${historyState.dateFilter === 'all' ? 'selected' : ''}>All Time</option>
+                            <option value="today" ${historyState.dateFilter === 'today' ? 'selected' : ''}>Today</option>
+                            <option value="week" ${historyState.dateFilter === 'week' ? 'selected' : ''}>Last 7 Days</option>
+                            <option value="month" ${historyState.dateFilter === 'month' ? 'selected' : ''}>Last 30 Days</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label class="filter-label">Tool</label>
+                        <select class="filter-select" id="toolFilter" onchange="updateHistoryFilter('tool', this.value)">
+                            <option value="all" ${historyState.toolFilter === 'all' ? 'selected' : ''}>All Tools</option>
+                            ${uniqueTools.map(tool => `
+                                <option value="${escapeHtml(tool)}" ${historyState.toolFilter === tool ? 'selected' : ''}>
+                                    ${escapeHtml(tool)}
+                                </option>
+                            `).join('')}
+                        </select>
+                    </div>
+
+                    <div class="filter-actions">
+                        <button class="btn btn-secondary" onclick="resetHistoryFilters()">Reset Filters</button>
+                        <button class="btn btn-primary" onclick="exportHistoryToJSON()">📥 Export JSON</button>
+                    </div>
+                </div>
+            `;
+
+            if (pageTasks.length === 0) {
+                html += `
+                    <div class="empty-state">
+                        <div class="empty-icon">📋</div>
+                        <p>No tasks match the selected filters</p>
+                    </div>
+                `;
+            } else {
+                pageTasks.forEach(task => {
+                    const duration = task.duration_sec ? formatDuration(task.duration_sec) : '-';
+                    const createdAt = new Date(task.created_at).toLocaleString();
+                    html += `
+                        <div class="task-item">
+                            <div class="task-header">
+                                <div class="task-main">
+                                    <span class="task-id">${escapeHtml(task.task_id)}</span>
+                                    <span class="task-tool">${escapeHtml(task.tool)}</span>
+                                </div>
+                                <div style="display: flex; gap: 12px; align-items: center;">
+                                    <span class="status-badge ${task.status}">${task.status}</span>
+                                    <span style="font-size: 13px; color: var(--text-tertiary);">${duration}</span>
+                                </div>
+                            </div>
+                            <div style="margin-top: 8px; font-size: 13px; color: var(--text-secondary);">
+                                ${createdAt}
+                            </div>
+                        </div>
+                    `;
+                });
+
+                // Pagination controls
+                if (totalPages > 1) {
+                    html += `
+                        <div class="pagination">
+                            <div class="pagination-info">
+                                Showing ${startIdx + 1}-${endIdx} of ${totalTasks} tasks
+                            </div>
+                            <div class="pagination-controls">
+                                <button class="pagination-btn" onclick="changeHistoryPage(${historyState.currentPage - 1})"
+                                    ${historyState.currentPage === 1 ? 'disabled' : ''}>
+                                    ← Previous
+                                </button>
+                    `;
+
+                    // Page numbers (show up to 5 pages)
+                    const pageStart = Math.max(1, historyState.currentPage - 2);
+                    const pageEnd = Math.min(totalPages, pageStart + 4);
+
+                    for (let i = pageStart; i <= pageEnd; i++) {
+                        html += `
+                            <button class="pagination-btn ${i === historyState.currentPage ? 'active' : ''}"
+                                onclick="changeHistoryPage(${i})">
+                                ${i}
+                            </button>
+                        `;
+                    }
+
+                    html += `
+                                <button class="pagination-btn" onclick="changeHistoryPage(${historyState.currentPage + 1})"
+                                    ${historyState.currentPage === totalPages ? 'disabled' : ''}>
+                                    Next →
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            content.innerHTML = html;
+        }
+
+        function calculateHistoryStats() {
+            const filtered = historyState.filteredTasks;
+            const all = historyState.allTasks;
+
+            const completed = filtered.filter(t => t.status === 'completed').length;
+            const failed = filtered.filter(t => t.status === 'failed').length;
+            const cancelled = filtered.filter(t => t.status === 'cancelled').length;
+
+            const successRate = filtered.length > 0
+                ? Math.round((completed / filtered.length) * 100)
+                : 0;
+
+            const durations = filtered
+                .filter(t => t.duration_sec && t.duration_sec > 0)
+                .map(t => t.duration_sec);
+
+            const avgDuration = durations.length > 0
+                ? formatDuration(durations.reduce((a, b) => a + b, 0) / durations.length)
+                : '-';
+
+            const totalDuration = durations.length > 0
+                ? formatDuration(durations.reduce((a, b) => a + b, 0))
+                : '-';
+
+            return {
+                total: all.length,
+                completed,
+                failed,
+                cancelled,
+                successRate,
+                avgDuration,
+                totalDuration
+            };
+        }
+
+        function updateHistoryFilter(type, value) {
+            if (type === 'status') {
+                historyState.statusFilter = value;
+            } else if (type === 'date') {
+                historyState.dateFilter = value;
+            } else if (type === 'tool') {
+                historyState.toolFilter = value;
+            }
+
+            historyState.currentPage = 1;
+            applyHistoryFilters();
+            renderHistory();
+        }
+
+        function resetHistoryFilters() {
+            historyState.statusFilter = 'all';
+            historyState.dateFilter = 'all';
+            historyState.toolFilter = 'all';
+            historyState.currentPage = 1;
+            applyHistoryFilters();
+            renderHistory();
+        }
+
+        function changeHistoryPage(page) {
+            const totalPages = Math.ceil(historyState.filteredTasks.length / historyState.pageSize);
+            if (page < 1 || page > totalPages) return;
+
+            historyState.currentPage = page;
+            renderHistory();
+        }
+
+        function exportHistoryToJSON() {
+            const exportData = {
+                exported_at: new Date().toISOString(),
+                filters: {
+                    status: historyState.statusFilter,
+                    date_range: historyState.dateFilter,
+                    tool: historyState.toolFilter
+                },
+                stats: calculateHistoryStats(),
+                tasks: historyState.filteredTasks
+            };
+
+            const dataStr = JSON.stringify(exportData, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(dataBlob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `browser-agent-history-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
         // Initialize
         document.getElementById('themeToggle').addEventListener('click', toggleTheme);
         initTheme();
@@ -1036,29 +1500,6 @@
             }
         });
     </script>
-
-    <!-- Placeholder content for Skills and History tabs -->
-    <template id="skills-placeholder">
-        <div class="panel-header">
-            <div class="panel-title">Browser Skills</div>
-        </div>
-        <div class="empty-state">
-            <div class="empty-icon">🎯</div>
-            <p><strong>Skills endpoint coming soon</strong></p>
-            <p style="font-size: 14px; margin-top: 8px;">This will display learned browser automation skills</p>
-        </div>
-    </template>
-
-    <template id="history-placeholder">
-        <div class="panel-header">
-            <div class="panel-title">Task History</div>
-        </div>
-        <div class="empty-state">
-            <div class="empty-icon">📊</div>
-            <p><strong>History view coming soon</strong></p>
-            <p style="font-size: 14px; margin-top: 8px;">This will show completed task analytics</p>
-        </div>
-    </template>
 
     <!-- Modal container for skill details -->
     <div id="skill-modal" style="display: none;"></div>
