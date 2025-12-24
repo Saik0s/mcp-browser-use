@@ -1294,6 +1294,194 @@ def serve() -> FastMCP:
             status_code=202,
         )
 
+    # --- Server-Sent Events (SSE) Endpoints ---
+
+    @server.custom_route(path="/api/events", methods=["GET"])
+    async def api_events(request):
+        """SSE stream for real-time task updates.
+
+        Streams task status changes and progress updates in real-time.
+        Clients should connect once and listen for events.
+
+        Event format:
+        data: {"task_id": "...", "status": "...", "progress": {...}, "message": "..."}
+
+        Heartbeat:
+        : heartbeat
+
+        Returns:
+            StreamingResponse with text/event-stream content type
+        """
+        import json
+
+        from starlette.responses import StreamingResponse
+
+        task_store = get_task_store()
+
+        async def event_generator():
+            """Generate SSE events for task updates."""
+            try:
+                last_task_states: dict[str, tuple[str, int, str]] = {}  # task_id -> (status, progress_current, message)
+
+                while True:
+                    # Get current running tasks
+                    running_tasks = await task_store.get_running_tasks()
+
+                    # Stream updates for tasks that changed
+                    for task in running_tasks:
+                        current_state = (
+                            task.status.value,
+                            task.progress_current,
+                            task.progress_message or "",
+                        )
+
+                        # Only send if state changed
+                        if task.task_id not in last_task_states or last_task_states[task.task_id] != current_state:
+                            event_data = {
+                                "task_id": task.task_id[:8],
+                                "full_task_id": task.task_id,
+                                "tool": task.tool_name,
+                                "status": task.status.value,
+                                "stage": task.stage.value if task.stage else None,
+                                "progress": {
+                                    "current": task.progress_current,
+                                    "total": task.progress_total,
+                                    "percent": task.progress_percent,
+                                    "message": task.progress_message,
+                                },
+                            }
+                            yield f"data: {json.dumps(event_data)}\n\n"
+                            last_task_states[task.task_id] = current_state
+
+                    # Send heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
+
+                    # Wait before next update
+                    await asyncio.sleep(2)
+
+            except asyncio.CancelledError:
+                # Client disconnected
+                logger.debug("SSE client disconnected from /api/events")
+                raise
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            },
+        )
+
+    @server.custom_route(path="/api/tasks/{task_id}/logs", methods=["GET"])
+    async def api_task_logs(request):
+        """SSE stream for individual task logs.
+
+        Streams real-time updates for a specific task.
+        Useful for monitoring long-running tasks in detail.
+
+        Event format:
+        data: {"status": "...", "progress": {...}, "stage": "...", "timestamp": "..."}
+
+        Returns:
+            StreamingResponse with text/event-stream content type
+        """
+        import json
+
+        from starlette.responses import StreamingResponse
+
+        task_id = request.path_params["task_id"]
+        task_store = get_task_store()
+
+        # Find task by ID (exact or prefix match)
+        task = await task_store.get_task(task_id)
+        if not task:
+            # Try prefix match
+            tasks = await task_store.get_task_history(limit=100)
+            for t in tasks:
+                if t.task_id.startswith(task_id):
+                    task = t
+                    break
+
+        if not task:
+            from starlette.responses import JSONResponse
+
+            return JSONResponse({"error": f"Task '{task_id}' not found"}, status_code=404)
+
+        full_task_id = task.task_id
+
+        async def log_generator():
+            """Generate SSE events for task-specific updates."""
+            try:
+                last_state: tuple[str, int, str, str | None] | None = None  # (status, progress_current, message, stage)
+
+                while True:
+                    # Fetch latest task state
+                    current_task = await task_store.get_task(full_task_id)
+                    if not current_task:
+                        # Task was deleted or disappeared
+                        yield f"data: {json.dumps({'event': 'task_deleted'})}\n\n"
+                        break
+
+                    current_state = (
+                        current_task.status.value,
+                        current_task.progress_current,
+                        current_task.progress_message or "",
+                        current_task.stage.value if current_task.stage else None,
+                    )
+
+                    # Send update if state changed
+                    if current_state != last_state:
+                        # Use the most recent timestamp available
+                        timestamp = current_task.completed_at or current_task.started_at or current_task.created_at
+                        event_data = {
+                            "status": current_task.status.value,
+                            "stage": current_task.stage.value if current_task.stage else None,
+                            "progress": {
+                                "current": current_task.progress_current,
+                                "total": current_task.progress_total,
+                                "percent": current_task.progress_percent,
+                                "message": current_task.progress_message,
+                            },
+                            "timestamp": timestamp.isoformat(),
+                        }
+
+                        # Include result/error if task completed/failed
+                        if current_task.status == TaskStatus.COMPLETED and current_task.result:
+                            event_data["result"] = current_task.result[:200]  # Truncate for SSE
+                        elif current_task.status == TaskStatus.FAILED and current_task.error:
+                            event_data["error"] = current_task.error
+
+                        yield f"data: {json.dumps(event_data)}\n\n"
+                        last_state = current_state
+
+                        # Stop streaming if task reached terminal state
+                        if current_task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                            yield f"data: {json.dumps({'event': 'task_ended', 'status': current_task.status.value})}\n\n"
+                            break
+
+                    # Send heartbeat
+                    yield ": heartbeat\n\n"
+
+                    # Wait before next update
+                    await asyncio.sleep(1)
+
+            except asyncio.CancelledError:
+                # Client disconnected
+                logger.debug(f"SSE client disconnected from /api/tasks/{task_id}/logs")
+                raise
+
+        return StreamingResponse(
+            log_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            },
+        )
+
     return server
 
 
