@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Agent Dashboard</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f6f8fa;
+            --bg-tertiary: #f0f2f5;
+            --text-primary: #24292f;
+            --text-secondary: #57606a;
+            --text-tertiary: #6e7781;
+            --border-color: #d0d7de;
+            --accent: #0969da;
+            --status-running: #0969da;
+            --status-completed: #1a7f37;
+            --status-failed: #cf222e;
+            --status-pending: #bf8700;
+            --status-cancelled: #6e7781;
+            --health-online: #1a7f37;
+            --health-offline: #cf222e;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        [data-theme="dark"] {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #1c2128;
+            --text-primary: #e6edf3;
+            --text-secondary: #9198a1;
+            --text-tertiary: #7d8590;
+            --border-color: #30363d;
+            --accent: #4493f8;
+            --status-running: #4493f8;
+            --status-completed: #3fb950;
+            --status-failed: #f85149;
+            --status-pending: #d29922;
+            --status-cancelled: #8b949e;
+            --health-online: #3fb950;
+            --health-offline: #f85149;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 20px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .brand {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .health-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.online {
+            background: var(--health-online);
+        }
+
+        .status-dot.offline {
+            background: var(--health-offline);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .health-info {
+            display: flex;
+            gap: 16px;
+            font-size: 14px;
+            color: var(--text-secondary);
+            flex-wrap: wrap;
+        }
+
+        .health-info span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .theme-toggle {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 14px;
+            color: var(--text-primary);
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .theme-toggle:hover {
+            background: var(--bg-secondary);
+        }
+
+        /* Navigation Tabs */
+        nav {
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            list-style: none;
+        }
+
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .tab:hover {
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+        }
+
+        .tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        /* Main Content */
+        main {
+            flex: 1;
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .content-panel {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            min-height: 400px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .panel-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-title {
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .panel-body {
+            padding: 20px;
+        }
+
+        /* Loading State */
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--text-tertiary);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+            opacity: 0.5;
+        }
+
+        /* Task List Styles */
+        .task-item {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.2s;
+        }
+
+        .task-item:hover {
+            background: var(--bg-secondary);
+        }
+
+        .task-item:last-child {
+            border-bottom: none;
+        }
+
+        .task-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .task-main {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .task-id {
+            font-family: "SF Mono", Monaco, monospace;
+            font-size: 13px;
+            color: var(--text-tertiary);
+            flex-shrink: 0;
+        }
+
+        .task-tool {
+            font-weight: 500;
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            color: white;
+            text-transform: capitalize;
+        }
+
+        .status-badge.running { background: var(--status-running); }
+        .status-badge.completed { background: var(--status-completed); }
+        .status-badge.failed { background: var(--status-failed); }
+        .status-badge.pending { background: var(--status-pending); }
+        .status-badge.cancelled { background: var(--status-cancelled); }
+
+        /* Skill Card */
+        .skill-card {
+            padding: 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-bottom: 12px;
+            background: var(--bg-secondary);
+        }
+
+        .skill-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 8px;
+        }
+
+        .skill-name {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .skill-url {
+            font-family: "SF Mono", Monaco, monospace;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .skill-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            padding: 4px 12px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .btn-danger {
+            color: var(--status-failed);
+            border-color: var(--status-failed);
+        }
+
+        .btn-danger:hover {
+            background: var(--status-failed);
+            color: white;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header-content {
+                flex-wrap: wrap;
+            }
+
+            .health-info {
+                width: 100%;
+                order: 3;
+            }
+
+            main {
+                padding: 12px;
+            }
+
+            .tabs {
+                overflow-x: auto;
+            }
+
+            .tab {
+                white-space: nowrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="brand">Browser Agent Dashboard</div>
+            <div class="health-status">
+                <div class="status-dot" id="statusDot"></div>
+                <strong id="statusText">Connecting...</strong>
+            </div>
+            <div class="health-info">
+                <span>Uptime: <strong id="uptime">-</strong></span>
+                <span>Memory: <strong id="memory">-</strong></span>
+                <span>Tasks: <strong id="runningCount">-</strong></span>
+            </div>
+            <button class="theme-toggle" id="themeToggle">🌙 Dark</button>
+        </div>
+    </header>
+
+    <nav>
+        <div class="nav-container">
+            <ul class="tabs">
+                <li class="tab active" hx-get="/api/tasks?limit=20" hx-target="#content" hx-trigger="click" onclick="setActiveTab(this)">
+                    Tasks
+                </li>
+                <li class="tab" hx-get="#skills-placeholder" hx-target="#content" hx-trigger="click" hx-swap="innerHTML" onclick="setActiveTab(this)">
+                    Skills
+                </li>
+                <li class="tab" hx-get="#history-placeholder" hx-target="#content" hx-trigger="click" hx-swap="innerHTML" onclick="setActiveTab(this)">
+                    History
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <div id="content" class="content-panel">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Loading tasks...</p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = 'http://localhost:8383/api';
+        let healthCheckInterval = null;
+
+        // Theme management
+        function initTheme() {
+            const saved = localStorage.getItem('theme');
+            const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+            updateThemeButton(theme);
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            updateThemeButton(next);
+        }
+
+        function updateThemeButton(theme) {
+            const btn = document.getElementById('themeToggle');
+            btn.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark';
+        }
+
+        // Tab management
+        function setActiveTab(element) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            element.classList.add('active');
+        }
+
+        // Health check
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                if (!response.ok) throw new Error('Health check failed');
+
+                const health = await response.json();
+                updateHealthDisplay(health);
+            } catch (error) {
+                console.error('Health check error:', error);
+                showOfflineStatus();
+            }
+        }
+
+        function updateHealthDisplay(health) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const uptime = document.getElementById('uptime');
+            const memory = document.getElementById('memory');
+            const running = document.getElementById('runningCount');
+
+            dot.className = 'status-dot online';
+            text.textContent = 'Online';
+
+            const uptimeMin = Math.floor(health.uptime_seconds / 60);
+            uptime.textContent = uptimeMin < 1 ? '< 1m' : `${uptimeMin}m`;
+            memory.textContent = `${health.memory_mb} MB`;
+            running.textContent = health.running_tasks;
+        }
+
+        function showOfflineStatus() {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+
+            dot.className = 'status-dot offline';
+            text.textContent = 'Offline';
+
+            document.getElementById('uptime').textContent = '-';
+            document.getElementById('memory').textContent = '-';
+            document.getElementById('runningCount').textContent = '-';
+        }
+
+        // HTMX event handlers
+        document.body.addEventListener('htmx:beforeRequest', (event) => {
+            const target = document.getElementById(event.detail.target.id);
+            if (target) {
+                target.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading...</p></div>';
+            }
+        });
+
+        document.body.addEventListener('htmx:afterRequest', (event) => {
+            if (event.detail.successful) {
+                console.log('Content loaded successfully');
+            } else {
+                const target = document.getElementById(event.detail.target.id);
+                if (target) {
+                    target.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon">⚠️</div>
+                            <p><strong>Failed to load content</strong></p>
+                            <p style="font-size: 14px; margin-top: 8px;">Ensure the server is running</p>
+                        </div>
+                    `;
+                }
+            }
+        });
+
+        // Render tasks from API response
+        document.body.addEventListener('htmx:afterOnLoad', (event) => {
+            if (event.detail.xhr.responseURL.includes('/api/tasks')) {
+                try {
+                    const data = JSON.parse(event.detail.xhr.response);
+                    renderTasks(data);
+                } catch (error) {
+                    console.error('Failed to parse tasks:', error);
+                }
+            }
+        });
+
+        function renderTasks(data) {
+            const tasks = data.tasks || [];
+            const content = document.getElementById('content');
+
+            if (tasks.length === 0) {
+                content.innerHTML = `
+                    <div class="panel-header">
+                        <div class="panel-title">Recent Tasks</div>
+                    </div>
+                    <div class="empty-state">
+                        <div class="empty-icon">📋</div>
+                        <p>No tasks yet</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '<div class="panel-header"><div class="panel-title">Recent Tasks</div></div>';
+
+            tasks.forEach(task => {
+                const duration = task.duration_sec ? formatDuration(task.duration_sec) : '-';
+                html += `
+                    <div class="task-item">
+                        <div class="task-header">
+                            <div class="task-main">
+                                <span class="task-id">${escapeHtml(task.task_id)}</span>
+                                <span class="task-tool">${escapeHtml(task.tool)}</span>
+                            </div>
+                            <div style="display: flex; gap: 12px; align-items: center;">
+                                <span class="status-badge ${task.status}">${task.status}</span>
+                                <span style="font-size: 13px; color: var(--text-tertiary);">${duration}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            content.innerHTML = html;
+        }
+
+        function formatDuration(seconds) {
+            if (!seconds || seconds < 1) return '< 1s';
+            if (seconds < 60) return `${Math.round(seconds)}s`;
+            const min = Math.floor(seconds / 60);
+            const sec = Math.round(seconds % 60);
+            return `${min}m ${sec}s`;
+        }
+
+        function escapeHtml(unsafe) {
+            if (unsafe === null || unsafe === undefined) return '';
+            return String(unsafe)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Initialize
+        document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+        initTheme();
+        checkHealth();
+        healthCheckInterval = setInterval(checkHealth, 5000);
+
+        // Load initial content
+        htmx.trigger('.tab.active', 'click');
+
+        // Cleanup
+        window.addEventListener('beforeunload', () => {
+            if (healthCheckInterval) {
+                clearInterval(healthCheckInterval);
+            }
+        });
+    </script>
+
+    <!-- Placeholder content for Skills and History tabs -->
+    <template id="skills-placeholder">
+        <div class="panel-header">
+            <div class="panel-title">Browser Skills</div>
+        </div>
+        <div class="empty-state">
+            <div class="empty-icon">🎯</div>
+            <p><strong>Skills endpoint coming soon</strong></p>
+            <p style="font-size: 14px; margin-top: 8px;">This will display learned browser automation skills</p>
+        </div>
+    </template>
+
+    <template id="history-placeholder">
+        <div class="panel-header">
+            <div class="panel-title">Task History</div>
+        </div>
+        <div class="empty-state">
+            <div class="empty-icon">📊</div>
+            <p><strong>History view coming soon</strong></p>
+            <p style="font-size: 14px; margin-top: 8px;">This will show completed task analytics</p>
+        </div>
+    </template>
+</body>
+</html>
