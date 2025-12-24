@@ -882,6 +882,24 @@ def serve() -> FastMCP:
 
         return FileResponse(viewer_path, media_type="text/html")
 
+    @server.custom_route(path="/dashboard", methods=["GET"])
+    async def serve_dashboard(request):
+        """Serve the dashboard UI for task/skill management."""
+        from starlette.responses import FileResponse
+
+        dashboard_path = Path(__file__).parent.parent.parent / "ui" / "dashboard.html"
+
+        if not dashboard_path.exists():
+            from starlette.responses import Response
+
+            return Response(
+                content="Dashboard not found. Make sure ui/dashboard.html exists.",
+                status_code=404,
+                media_type="text/plain",
+            )
+
+        return FileResponse(dashboard_path, media_type="text/html")
+
     # REST API endpoints for the web viewer (simpler than JSON-RPC for browser)
     @server.custom_route(path="/api/health", methods=["GET"])
     async def api_health(request):
