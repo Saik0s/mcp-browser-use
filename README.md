@@ -172,6 +172,7 @@ mcp-server-browser-use config set -k agent.max_steps -v 30
 | `browser.headless` | `true` | Run browser without GUI |
 | `browser.cdp_url` | - | Connect to existing Chrome (e.g., http://localhost:9222) |
 | `browser.user_data_dir` | - | Chrome profile directory for persistent logins/cookies |
+| `browser.chromium_sandbox` | `true` | Enable Chromium sandboxing for security |
 | `agent.max_steps` | `20` | Max steps per browser task |
 | `agent.use_vision` | `true` | Enable vision capabilities for the agent |
 | `research.max_searches` | `5` | Max searches per research task |
