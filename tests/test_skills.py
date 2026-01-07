@@ -89,7 +89,27 @@ class TestSkillRequest:
     def test_build_url_handles_missing_params(self):
         request = SkillRequest(url="https://api.example.com/search?q={query}")
         result = request.build_url({})
-        assert result == "https://api.example.com/search?q={query}"
+        assert result == "https://api.example.com/search?q=%7Bquery%7D"
+
+    def test_build_url_encodes_path_params_with_spaces(self):
+        request = SkillRequest(url="https://api.example.com/users/{user_id}/posts")
+        result = request.build_url({"user_id": "a b"})
+        assert result == "https://api.example.com/users/a%20b/posts"
+
+    def test_build_url_encodes_special_chars(self):
+        request = SkillRequest(url="https://api.example.com/search/{query}")
+        result = request.build_url({"query": "foo&bar=baz"})
+        assert result == "https://api.example.com/search/foo%26bar%3Dbaz"
+
+    def test_build_url_encodes_unicode(self):
+        request = SkillRequest(url="https://api.example.com/search/{query}")
+        result = request.build_url({"query": "日本語"})
+        assert "%E6%97%A5%E6%9C%AC%E8%AA%9E" in result
+
+    def test_build_url_encodes_hash_in_path(self):
+        request = SkillRequest(url="https://api.example.com/tags/{tag}")
+        result = request.build_url({"tag": "#python"})
+        assert result == "https://api.example.com/tags/%23python"
 
     def test_build_body_substitutes_params(self):
         request = SkillRequest(
