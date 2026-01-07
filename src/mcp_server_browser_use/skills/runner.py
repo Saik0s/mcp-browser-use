@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MAX_RESPONSE_SIZE = 1_000_000  # 1MB cap to prevent OOM on huge API responses
+
 # Blocked hostnames (case-insensitive) - comprehensive localhost variants
 _BLOCKED_HOSTS = frozenset(
     {
@@ -496,11 +498,13 @@ class SkillRunner:
                     error=f"HTTP {status}: {error_text[:100]}",
                 )
 
-            # Success - extract data
             raw_body = value.get("body", "")
             status_code = value.get("status", 200)
+            truncated = value.get("truncated", False)
 
-            # Parse response based on type
+            if truncated:
+                logger.warning(f"Response truncated to {MAX_RESPONSE_SIZE} bytes")
+
             parsed_data = self._parse_response(raw_body, request)
 
             logger.info(f"Fetch succeeded: {status_code}, data extracted")
@@ -528,7 +532,6 @@ class SkillRunner:
         """
         options_json = json.dumps(options)
 
-        # Build response handling based on type
         if response_type == "json":
             response_handler = "response.json()"
         else:
@@ -536,6 +539,7 @@ class SkillRunner:
 
         return f"""
 (async () => {{
+    const MAX_SIZE = {MAX_RESPONSE_SIZE};
     let response;
     try {{
         response = await fetch({json.dumps(url)}, {options_json});
@@ -547,22 +551,29 @@ class SkillRunner:
         }};
     }}
 
-    // Capture status before attempting body parse (may fail for non-JSON)
     const status = response.status;
     const ok = response.ok;
 
     try {{
         const body = await {response_handler};
+        let bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+        const truncated = bodyStr.length > MAX_SIZE;
+        if (truncated) {{
+            bodyStr = bodyStr.slice(0, MAX_SIZE);
+        }}
         return {{
             ok: ok,
             status: status,
-            body: typeof body === 'string' ? body : JSON.stringify(body),
+            body: bodyStr,
+            truncated: truncated,
         }};
     }} catch (parseError) {{
-        // Body parsing failed - try to get raw text for error context
         let rawBody = '';
         try {{
             rawBody = await response.clone().text();
+            if (rawBody.length > MAX_SIZE) {{
+                rawBody = rawBody.slice(0, MAX_SIZE);
+            }}
         }} catch (e) {{}}
 
         return {{

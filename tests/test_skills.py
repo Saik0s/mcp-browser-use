@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from mcp_server_browser_use.skills.models import AuthRecovery, Skill, SkillRequest
-from mcp_server_browser_use.skills.runner import SkillRunner
+from mcp_server_browser_use.skills.runner import MAX_RESPONSE_SIZE, SkillRunner
 
 # --- Fixtures ---
 
@@ -413,3 +413,18 @@ class TestJMESPathExtraction:
         # JMESPath uses [0] syntax for array index access
         result = extract_data(data, "items[0]")
         assert result == "first"
+
+
+class TestMaxResponseSize:
+    """Tests for MAX_RESPONSE_SIZE constant."""
+
+    def test_max_response_size_is_1mb(self):
+        assert MAX_RESPONSE_SIZE == 1_000_000
+
+    def test_build_fetch_js_includes_max_size(self):
+        runner = SkillRunner()
+        request = SkillRequest(url="https://example.com/api")
+        js_code = runner._build_fetch_js("https://example.com/api", {}, request.response_type)
+        assert f"const MAX_SIZE = {MAX_RESPONSE_SIZE}" in js_code
+        assert "bodyStr.slice(0, MAX_SIZE)" in js_code
+        assert "truncated: truncated" in js_code
