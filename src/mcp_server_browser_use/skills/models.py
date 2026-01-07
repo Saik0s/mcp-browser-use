@@ -13,6 +13,7 @@ Execution uses browser's fetch() via CDP for:
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 
 # Sensitive headers that should be stripped before saving skills
 SENSITIVE_HEADERS = frozenset(
@@ -144,11 +145,38 @@ class SkillRequest:
     allowed_domains: list[str] = field(default_factory=list)
 
     def build_url(self, params: dict[str, Any]) -> str:
-        """Build URL by substituting parameter placeholders."""
-        url = self.url
+        """Build URL by substituting parameter placeholders with proper encoding.
+
+        Handles:
+        - Path parameters with URL encoding: /users/{id} -> /users/a%20b
+        - Query parameters with proper escaping
+        - Special characters: spaces, &, =, #, unicode
+        """
+        parsed = urlparse(self.url)
+
+        # Substitute path parameters with URL encoding
+        path = parsed.path
         for key, value in params.items():
-            url = url.replace(f"{{{key}}}", str(value))
-        return url
+            placeholder = f"{{{key}}}"
+            if placeholder in path:
+                path = path.replace(placeholder, quote(str(value), safe=""))
+
+        # Substitute query parameters
+        query_dict = parse_qs(parsed.query, keep_blank_values=True)
+        new_query_items: list[tuple[str, str]] = []
+
+        for key, values in query_dict.items():
+            for val in values:
+                new_val = val
+                for pk, pv in params.items():
+                    placeholder = f"{{{pk}}}"
+                    if placeholder in new_val:
+                        new_val = new_val.replace(placeholder, str(pv))
+                new_query_items.append((key, new_val))
+
+        new_query = urlencode(new_query_items, safe="")
+
+        return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, new_query, parsed.fragment))
 
     def build_body(self, params: dict[str, Any]) -> str | None:
         """Build request body by substituting parameter placeholders."""
