@@ -3,8 +3,6 @@
 import pytest
 from starlette.testclient import TestClient
 
-from mcp_server_browser_use.server import serve
-
 
 @pytest.fixture
 def anyio_backend():
