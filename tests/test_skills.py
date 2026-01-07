@@ -428,3 +428,69 @@ class TestMaxResponseSize:
         assert f"const MAX_SIZE = {MAX_RESPONSE_SIZE}" in js_code
         assert "bodyStr.slice(0, MAX_SIZE)" in js_code
         assert "truncated: truncated" in js_code
+
+
+class TestSkillCategorization:
+    """Tests for skill categorization and metadata fields."""
+
+    def test_skill_default_category(self):
+        skill = Skill(name="test", description="", original_task="")
+        assert skill.category == "other"
+        assert skill.difficulty == "medium"
+        assert skill.tags == []
+
+    def test_skill_to_dict_includes_categorization(self):
+        skill = Skill(
+            name="github-repos",
+            description="Search repos",
+            original_task="Find repos",
+            category="developer",
+            subcategory="vcs",
+            tags=["github", "api"],
+            difficulty="easy",
+            rate_limit_delay_ms=1000,
+            max_response_size_bytes=500_000,
+        )
+        data = skill.to_dict()
+        assert data["category"] == "developer"
+        assert data["subcategory"] == "vcs"
+        assert data["tags"] == ["github", "api"]
+        assert data["difficulty"] == "easy"
+        assert data["rate_limit_delay_ms"] == 1000
+        assert data["max_response_size_bytes"] == 500_000
+
+    def test_skill_from_dict_parses_categorization(self):
+        data = {
+            "name": "npm-search",
+            "category": "developer",
+            "subcategory": "packages",
+            "tags": ["npm", "nodejs"],
+            "difficulty": "trivial",
+            "rate_limit_delay_ms": 500,
+            "max_response_size_bytes": 2_000_000,
+        }
+        skill = Skill.from_dict(data)
+        assert skill.category == "developer"
+        assert skill.subcategory == "packages"
+        assert skill.tags == ["npm", "nodejs"]
+        assert skill.difficulty == "trivial"
+        assert skill.rate_limit_delay_ms == 500
+        assert skill.max_response_size_bytes == 2_000_000
+
+    def test_skill_auth_serialization(self):
+        from mcp_server_browser_use.skills.models import SkillAuth
+
+        skill = Skill(
+            name="github-api",
+            description="GitHub API",
+            original_task="",
+            skill_auth=SkillAuth(auth_type="bearer", key_name="Authorization", env_var="GITHUB_TOKEN"),
+        )
+        data = skill.to_dict()
+        assert data["skill_auth"]["auth_type"] == "bearer"
+        assert data["skill_auth"]["env_var"] == "GITHUB_TOKEN"
+
+        parsed = Skill.from_dict(data)
+        assert parsed.skill_auth is not None
+        assert parsed.skill_auth.auth_type == "bearer"
+        assert parsed.skill_auth.env_var == "GITHUB_TOKEN"

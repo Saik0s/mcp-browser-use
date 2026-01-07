@@ -15,6 +15,9 @@ from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 
+SkillDifficulty = Literal["trivial", "easy", "medium", "hard"]
+SkillCategory = Literal["developer", "finance", "ecommerce", "jobs", "social", "productivity", "other"]
+
 # Sensitive headers that should be stripped before saving skills
 SENSITIVE_HEADERS = frozenset(
     {
@@ -212,6 +215,19 @@ class SkillRequest:
 
 
 @dataclass
+class SkillAuth:
+    """Authentication configuration for API-key based skills.
+
+    For skills that require API keys or tokens rather than browser cookies.
+    Keys are stored separately (env vars or secure store), not in skill YAML.
+    """
+
+    auth_type: Literal["header", "query", "bearer"] = "header"
+    key_name: str = ""  # Header name or query param, e.g. "X-API-Key" or "api_key"
+    env_var: str = ""  # Env var containing the key, e.g. "GITHUB_TOKEN"
+
+
+@dataclass
 class AuthRecovery:
     """Configuration for handling authentication failures.
 
@@ -221,15 +237,12 @@ class AuthRecovery:
     3. Retry the original request
     """
 
-    # When to trigger recovery
     trigger_on_status: list[int] = field(default_factory=lambda: [401, 403])
-    trigger_on_body: str | None = None  # Text in response body that indicates auth failure
+    trigger_on_body: str | None = None
 
-    # Recovery action
-    recovery_page: str = ""  # URL to navigate to for re-auth (e.g., login page)
-    success_indicator: str | None = None  # How to know auth succeeded (e.g., "cookie:session present")
+    recovery_page: str = ""
+    success_indicator: str | None = None
 
-    # Limits
     max_retries: int = 1
 
 
@@ -311,15 +324,27 @@ class Skill:
 
     name: str
     description: str
-    original_task: str  # The task that created this skill
+    original_task: str
 
-    # NEW: Direct execution configuration
-    request: SkillRequest | None = None  # If set, use direct fetch() execution
-    auth_recovery: AuthRecovery | None = None  # How to handle auth failures
+    # Direct execution configuration
+    request: SkillRequest | None = None
+    auth_recovery: AuthRecovery | None = None
+    skill_auth: SkillAuth | None = None
 
-    # LEGACY: Hint-based execution (agent navigates with guidance)
+    # Hint-based execution (legacy)
     hints: SkillHints = field(default_factory=SkillHints)
     parameters: list[SkillParameter] = field(default_factory=list)
+
+    # Categorization
+    category: SkillCategory = "other"
+    subcategory: str = ""
+    tags: list[str] = field(default_factory=list)
+    difficulty: SkillDifficulty = "medium"
+
+    # Rate limiting
+    rate_limit_delay_ms: int = 0
+    last_executed_at: datetime | None = None
+    max_response_size_bytes: int = 1_000_000
 
     # Metadata
     version: int = 1
@@ -366,6 +391,13 @@ class Skill:
             "name": self.name,
             "description": self.description,
             "original_task": self.original_task,
+            "category": self.category,
+            "subcategory": self.subcategory,
+            "tags": self.tags,
+            "difficulty": self.difficulty,
+            "rate_limit_delay_ms": self.rate_limit_delay_ms,
+            "last_executed_at": self.last_executed_at.isoformat() if self.last_executed_at else None,
+            "max_response_size_bytes": self.max_response_size_bytes,
             "version": self.version,
             "created": self.created.isoformat() if self.created else None,
             "last_used": self.last_used.isoformat() if self.last_used else None,
@@ -402,7 +434,6 @@ class Skill:
                 "allowed_domains": self.request.allowed_domains,
             }
 
-        # NEW: Add auth_recovery
         if self.auth_recovery:
             result["auth_recovery"] = {
                 "trigger_on_status": self.auth_recovery.trigger_on_status,
@@ -410,6 +441,13 @@ class Skill:
                 "recovery_page": self.auth_recovery.recovery_page,
                 "success_indicator": self.auth_recovery.success_indicator,
                 "max_retries": self.auth_recovery.max_retries,
+            }
+
+        if self.skill_auth:
+            result["skill_auth"] = {
+                "auth_type": self.skill_auth.auth_type,
+                "key_name": self.skill_auth.key_name,
+                "env_var": self.skill_auth.env_var,
             }
 
         # LEGACY: Add hints for backward compatibility
@@ -464,7 +502,6 @@ class Skill:
                 allowed_domains=req_data.get("allowed_domains", []),
             )
 
-        # NEW: Parse auth_recovery
         auth_recovery = None
         auth_data = data.get("auth_recovery")
         if auth_data:
@@ -475,6 +512,19 @@ class Skill:
                 success_indicator=auth_data.get("success_indicator"),
                 max_retries=auth_data.get("max_retries", 1),
             )
+
+        skill_auth = None
+        skill_auth_data = data.get("skill_auth")
+        if skill_auth_data:
+            skill_auth = SkillAuth(
+                auth_type=skill_auth_data.get("auth_type", "header"),
+                key_name=skill_auth_data.get("key_name", ""),
+                env_var=skill_auth_data.get("env_var", ""),
+            )
+
+        last_executed_at = data.get("last_executed_at")
+        if isinstance(last_executed_at, str):
+            last_executed_at = datetime.fromisoformat(last_executed_at)
 
         # LEGACY: Parse hints
         hints_data = data.get("hints", {})
@@ -527,15 +577,23 @@ class Skill:
             name=data["name"],
             description=data.get("description", ""),
             original_task=data.get("original_task", ""),
+            request=request,
+            auth_recovery=auth_recovery,
+            skill_auth=skill_auth,
+            hints=hints,
+            parameters=parameters,
+            category=data.get("category", "other"),
+            subcategory=data.get("subcategory", ""),
+            tags=data.get("tags", []),
+            difficulty=data.get("difficulty", "medium"),
+            rate_limit_delay_ms=data.get("rate_limit_delay_ms", 0),
+            last_executed_at=last_executed_at,
+            max_response_size_bytes=data.get("max_response_size_bytes", 1_000_000),
             version=data.get("version", 1),
             created=created,
             last_used=last_used,
             success_count=data.get("success_count", 0),
             failure_count=data.get("failure_count", 0),
-            status=data.get("status", "draft"),
-            parameters=parameters,
-            request=request,
-            auth_recovery=auth_recovery,
-            hints=hints,
             fallback=fallback,
+            status=data.get("status", "draft"),
         )
