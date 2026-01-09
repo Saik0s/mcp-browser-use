@@ -1,7 +1,7 @@
-"""Skill recorder for capturing network events during agent execution.
+"""Recipe recorder for capturing network events during agent execution.
 
 The recorder captures all network traffic (especially XHR/Fetch API calls)
-during a browser session so they can be analyzed to extract skills.
+during a browser session so they can be analyzed to extract recipes.
 
 Key design decisions (validated by GPT 5.2 Pro):
 - Uses UUID for request IDs (not id(request) which can collide after GC)
@@ -60,13 +60,13 @@ MAX_BODY_SIZE = 128 * 1024
 BODY_CAPTURE_TIMEOUT = 5.0
 
 
-class SkillRecorder:
-    """Records browser session network events for skill extraction.
+class RecipeRecorder:
+    """Records browser session network events for recipe extraction.
 
     Works with browser-use's CDP-based architecture to capture network traffic.
 
     Usage:
-        recorder = SkillRecorder(task="Find jobs on Upwork")
+        recorder = RecipeRecorder(task="Find jobs on Upwork")
         await recorder.attach(browser_session)  # Attach to browser-use session
 
         # ... agent executes ...
@@ -147,7 +147,7 @@ class SkillRecorder:
         cdp_client.register.Network.responseReceived(self._on_response_received)
         cdp_client.register.Network.loadingFailed(self._on_loading_failed)
 
-        logger.info(f"SkillRecorder attached via CDP for task: {self.task[:50]}...")
+        logger.info(f"RecipeRecorder attached via CDP for task: {self.task[:50]}...")
 
     def _on_request_will_be_sent(self, event: "RequestWillBeSentEvent", session_id: str | None) -> None:
         """Handle CDP Network.requestWillBeSent event.
@@ -309,7 +309,7 @@ class SkillRecorder:
         # We just mark ourselves as detached
 
         self._attached = False
-        logger.debug("SkillRecorder detached")
+        logger.debug("RecipeRecorder detached")
 
     async def finalize(self, timeout: float = 30.0) -> None:
         """Wait for all pending body capture tasks to complete.

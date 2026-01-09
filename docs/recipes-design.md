@@ -1,29 +1,29 @@
-# Skills Feature Design
+# Recipes Feature Design
 
 ## Overview
 
-The Skills feature enables mcp-browser-use to **learn browser tasks once and replay them efficiently with hints**. Skills are **machine-generated** from successful learning sessions - NOT manually authored.
+The Recipes feature enables mcp-browser-use to **learn browser tasks once and replay them efficiently with hints**. Recipes are **machine-generated** from successful learning sessions - NOT manually authored.
 
-**Core Principle:** Skills are API extraction recipes, not DOM scrapers. The agent discovers API endpoints during learning mode.
+**Core Principle:** Recipes are API extraction templates, not DOM scrapers. The agent discovers API endpoints during learning mode.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Browser Skills Engine                    │
+│                     Browser Recipes Engine                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  LEARNING MODE (learn=True):                                 │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
 │  │   Agent +    │───▶│   Analyzer   │───▶│    Store     │   │
-│  │  API Focus   │    │  (LLM finds  │    │  (YAML skill │   │
+│  │  API Focus   │    │  (LLM finds  │    │ (YAML recipe │   │
 │  │  Instructions│    │  money req)  │    │   files)     │   │
 │  └──────────────┘    └──────────────┘    └──────────────┘   │
 │                                                              │
-│  EXECUTION MODE (skill_name provided):                       │
+│  EXECUTION MODE (recipe_name provided):                      │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
 │  │    Store     │───▶│   Executor   │───▶│    Agent +   │   │
-│  │  (load skill)│    │ (inject hints)│   │   Hints      │   │
+│  │ (load recipe)│    │ (inject hints)│   │   Hints      │   │
 │  └──────────────┘    └──────────────┘    └──────────────┘   │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -32,13 +32,13 @@ The Skills feature enables mcp-browser-use to **learn browser tasks once and rep
 ## File Structure
 
 ```
-src/mcp_server_browser_use/skills/
+src/mcp_server_browser_use/recipes/
 ├── __init__.py          # Public API exports
-├── models.py            # Skill, MoneyRequest, SessionRecording dataclasses
-├── store.py             # SkillStore - YAML persistence
-├── executor.py          # SkillExecutor - hint injection + learning mode
-├── analyzer.py          # SkillAnalyzer - LLM extraction of money request
-├── recorder.py          # SkillRecorder - CDP network event capture
+├── models.py            # Recipe, MoneyRequest, SessionRecording dataclasses
+├── store.py             # RecipeStore - YAML persistence
+├── executor.py          # RecipeExecutor - hint injection + learning mode
+├── analyzer.py          # RecipeAnalyzer - LLM extraction of money request
+├── recorder.py          # RecipeRecorder - CDP network event capture
 └── prompts.py           # API discovery and analysis prompts
 ```
 
@@ -47,11 +47,11 @@ src/mcp_server_browser_use/skills/
 ### Learning Mode
 
 ```python
-# Learn a new skill
+# Learn a new recipe
 result = await run_browser_agent(
     task="Find new iOS developer jobs on Upwork",
-    learn=True,                     # Enable API discovery mode
-    save_skill_as="upwork-ios-jobs" # Save extracted skill
+    learn=True,                      # Enable API discovery mode
+    save_recipe_as="upwork-ios-jobs" # Save extracted recipe
 )
 ```
 
@@ -63,16 +63,16 @@ The agent executes with modified instructions:
 If successful, the analyzer:
 1. Identifies the "money request" (API call that returned the data)
 2. Extracts parameters that can be templated
-3. Saves as a machine-generated skill file
+3. Saves as a machine-generated recipe file
 
 ### Execution Mode
 
 ```python
-# Use learned skill
+# Use learned recipe
 result = await run_browser_agent(
     task="Find new Python developer jobs",
-    skill_name="upwork-ios-jobs",
-    skill_params='{"keywords": "Python"}'
+    recipe_name="upwork-ios-jobs",
+    recipe_params='{"keywords": "Python"}'
 )
 ```
 
@@ -113,7 +113,7 @@ What NOT to do:
 - The page DOM is just for navigation, not data extraction
 ```
 
-### Skill File Structure (Machine-Generated)
+### Recipe File Structure (Machine-Generated)
 
 ```yaml
 name: upwork-job-search
@@ -150,19 +150,19 @@ fallback:
 
 New parameters:
 - `learn: bool = False` - Enable learning mode
-- `save_skill_as: Optional[str]` - Name to save learned skill
+- `save_recipe_as: Optional[str]` - Name to save learned recipe
 
-### skill_list
+### recipe_list
 
-List all available skills (machine-generated).
+List all available recipes (machine-generated).
 
-### skill_get
+### recipe_get
 
-Get full details of a specific skill.
+Get full details of a specific recipe.
 
-### skill_delete
+### recipe_delete
 
-Delete a skill by name.
+Delete a recipe by name.
 
 ## Why This Design?
 
@@ -173,11 +173,11 @@ Delete a skill by name.
 3. **Adapts to changes** - Falls back to exploration if API changes
 4. **Respects ToS** - Not reverse-engineering private APIs
 
-### Why Machine-Generated Skills?
+### Why Machine-Generated Recipes?
 
 1. **No human expertise needed** - Agent discovers the API
 2. **Accurate extraction** - LLM identifies relevant parameters
-3. **Complex structure** - Skills capture API details humans wouldn't write
+3. **Complex structure** - Recipes capture API details humans wouldn't write
 4. **Self-correcting** - Re-learn if API changes
 
 ### Why API Focus (not DOM)?
@@ -206,7 +206,7 @@ Delete a skill by name.
 
 ### Phase 1: MVP ✅
 - Learning mode with API discovery instructions
-- Skill extraction via LLM analysis
+- Recipe extraction via LLM analysis
 - YAML persistence and hint injection
 - Basic fallback handling
 
@@ -218,8 +218,8 @@ Delete a skill by name.
 - Header redaction for security (cookies, auth tokens)
 
 ### Phase 3: Advanced Features (Future)
-- Skill validation against expected response schema
-- Skill versioning and migration
-- Skill sharing/marketplace
+- Recipe validation against expected response schema
+- Recipe versioning and migration
+- Recipe sharing/marketplace
 - Confidence scoring
-- Multi-step skill chains
+- Multi-step recipe chains

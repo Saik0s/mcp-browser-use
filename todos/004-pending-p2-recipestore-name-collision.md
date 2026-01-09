@@ -6,16 +6,16 @@ tags: [code-review, reliability]
 dependencies: []
 ---
 
-# Prevent skill name collisions from filename sanitization
+# Prevent recipe name collisions from filename sanitization
 
 ## Problem Statement
 
-Skill filenames are derived from sanitized names. Different names can map to the same filename, causing silent overwrite.
+Recipe filenames are derived from sanitized names. Different names can map to the same filename, causing silent overwrite.
 
 ## Findings
 
-- `_skill_path` lowercases and replaces non-alnum with `-`. `src/mcp_server_browser_use/skills/store.py:42-46`
-- No collision check before save. `src/mcp_server_browser_use/skills/store.py:91-99`
+- `_recipe_path` lowercases and replaces non-alnum with `-`. `src/mcp_server_browser_use/recipes/store.py:42-46`
+- No collision check before save. `src/mcp_server_browser_use/recipes/store.py:91-99`
 
 ## Proposed Solutions
 
@@ -52,16 +52,16 @@ Skill filenames are derived from sanitized names. Different names can map to the
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/store.py:42`
-- `src/mcp_server_browser_use/skills/store.py:91`
+- `src/mcp_server_browser_use/recipes/store.py:42`
+- `src/mcp_server_browser_use/recipes/store.py:91`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 
-- [ ] Distinct skill names never overwrite each other
+- [ ] Distinct recipe names never overwrite each other
 - [ ] Collision handling is explicit and test-covered
 
 ## Work Log
@@ -78,4 +78,4 @@ Skill filenames are derived from sanitized names. Different names can map to the
 
 ## Notes
 
-- Consider storing a name->path index in store if collisions become common.
+- Consider storing a name->path index in RecipeStore if collisions become common.

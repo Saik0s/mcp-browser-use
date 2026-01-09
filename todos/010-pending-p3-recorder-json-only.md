@@ -10,12 +10,12 @@ dependencies: []
 
 ## Problem Statement
 
-Recorder only captures response bodies for JSON content types. Skills cannot be learned for APIs that return JSON with `text/plain` or HTML responses needed for extraction.
+Recorder only captures response bodies for JSON content types. Recipes cannot be learned for APIs that return JSON with `text/plain` or HTML responses needed for extraction.
 
 ## Findings
 
-- JSON-only filter in recorder. `src/mcp_server_browser_use/skills/recorder.py:46-53`
-- Body capture only happens for JSON content types. `src/mcp_server_browser_use/skills/recorder.py:219-227`
+- JSON-only filter in recorder. `src/mcp_server_browser_use/recipes/recorder.py:46-53`
+- Body capture only happens for JSON content types. `src/mcp_server_browser_use/recipes/recorder.py:219-227`
 
 ## Proposed Solutions
 
@@ -52,12 +52,12 @@ Recorder only captures response bodies for JSON content types. Skills cannot be 
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/recorder.py:46`
-- `src/mcp_server_browser_use/skills/recorder.py:219`
+- `src/mcp_server_browser_use/recipes/recorder.py:46`
+- `src/mcp_server_browser_use/recipes/recorder.py:219`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 

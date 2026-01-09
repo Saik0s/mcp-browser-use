@@ -1,22 +1,22 @@
-"""Skill executor for hint injection and result validation."""
+"""Recipe executor for hint injection and result validation."""
 
 import logging
 
-from .models import Skill
+from .models import Recipe
 from .prompts import LEARNING_MODE_SUFFIX, get_execution_hints
 
 logger = logging.getLogger(__name__)
 
 
-class SkillExecutor:
-    """Executes skills by injecting hints into agent prompts."""
+class RecipeExecutor:
+    """Executes recipes by injecting hints into agent prompts."""
 
-    def inject_hints(self, task: str, skill: Skill, params: dict | None = None) -> str:
-        """Augment task prompt with skill hints.
+    def inject_hints(self, task: str, recipe: Recipe, params: dict | None = None) -> str:
+        """Augment task prompt with recipe hints.
 
         Args:
             task: Original task description
-            skill: Skill with hints to inject
+            recipe: Recipe with hints to inject
             params: Optional parameters to substitute in hints
 
         Returns:
@@ -24,15 +24,15 @@ class SkillExecutor:
         """
         params = params or {}
 
-        # Get formatted hints from skill
-        hints_text = skill.hints.to_prompt(params)
+        # Get formatted hints from recipe
+        hints_text = recipe.hints.to_prompt(params)
 
         if not hints_text.strip():
             # No hints to inject, return original task
             return task
 
         # Build execution prompt with hints
-        execution_prompt = get_execution_hints(skill.name, hints_text)
+        execution_prompt = get_execution_hints(recipe.name, hints_text)
         return f"{execution_prompt}{task}"
 
     def inject_learning_mode(self, task: str) -> str:
@@ -49,16 +49,16 @@ class SkillExecutor:
     def validate_result(
         self,
         result: str,
-        skill: Skill,
+        recipe: Recipe,
     ) -> bool:
-        """Validate execution result against skill expectations.
+        """Validate execution result against recipe expectations.
 
         For now, just check that result is non-empty.
         Future: Compare against expected response schema.
 
         Args:
             result: Agent result string
-            skill: Skill used for execution
+            recipe: Recipe used for execution
 
         Returns:
             True if result appears valid

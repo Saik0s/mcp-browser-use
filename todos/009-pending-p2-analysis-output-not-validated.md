@@ -6,16 +6,16 @@ tags: [code-review, reliability]
 dependencies: []
 ---
 
-# Validate LLM analysis output before persisting skills
+# Validate LLM analysis output before persisting recipes
 
 ## Problem Statement
 
-Analyzer accepts LLM JSON without schema validation. Invalid parameter names or malformed request fields can create broken skills that fail at runtime.
+Analyzer accepts LLM JSON without schema validation. Invalid parameter names or malformed request fields can create broken recipes that fail at runtime.
 
 ## Findings
 
-- `_parse_analysis_response` only JSON-decodes content. `src/mcp_server_browser_use/skills/analyzer.py:91-118`
-- `_build_skill` uses fields without validation (empty param names, missing URL). `src/mcp_server_browser_use/skills/analyzer.py:130-166`
+- `_parse_analysis_response` only JSON-decodes content. `src/mcp_server_browser_use/recipes/analyzer.py:91-118`
+- `_build_recipe` uses fields without validation (empty param names, missing URL). `src/mcp_server_browser_use/recipes/analyzer.py:130-166`
 
 ## Proposed Solutions
 
@@ -52,17 +52,17 @@ Analyzer accepts LLM JSON without schema validation. Invalid parameter names or 
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/analyzer.py:91`
-- `src/mcp_server_browser_use/skills/analyzer.py:130`
+- `src/mcp_server_browser_use/recipes/analyzer.py:91`
+- `src/mcp_server_browser_use/recipes/analyzer.py:130`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 
 - [ ] Analyzer rejects invalid output with clear errors
-- [ ] Valid output consistently produces runnable skills
+- [ ] Valid output consistently produces runnable recipes
 
 ## Work Log
 

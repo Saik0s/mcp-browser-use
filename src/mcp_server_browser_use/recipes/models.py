@@ -1,6 +1,6 @@
-"""Data models for browser skills.
+"""Data models for browser recipes.
 
-Skills are MACHINE-GENERATED from learning sessions, not manually authored.
+Recipes are MACHINE-GENERATED from learning sessions, not manually authored.
 The agent discovers API endpoints during learning mode, and the analyzer
 extracts the "money request" (the API call that returns the desired data).
 
@@ -15,10 +15,10 @@ from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 
-SkillDifficulty = Literal["trivial", "easy", "medium", "hard"]
-SkillCategory = Literal["developer", "finance", "ecommerce", "jobs", "social", "productivity", "other"]
+RecipeDifficulty = Literal["trivial", "easy", "medium", "hard"]
+RecipeCategory = Literal["developer", "finance", "ecommerce", "jobs", "social", "productivity", "other"]
 
-# Sensitive headers that should be stripped before saving skills
+# Sensitive headers that should be stripped before saving recipes
 SENSITIVE_HEADERS = frozenset(
     {
         "authorization",
@@ -35,7 +35,7 @@ SENSITIVE_HEADERS = frozenset(
 
 
 def strip_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
-    """Remove sensitive headers before saving skill.
+    """Remove sensitive headers before saving recipe.
 
     Unlike redaction, this completely removes sensitive headers
     rather than replacing values with '***REDACTED***'.
@@ -74,7 +74,7 @@ class NetworkResponse:
 
 @dataclass
 class SessionRecording:
-    """Complete recording of a browser session for skill extraction."""
+    """Complete recording of a browser session for recipe extraction."""
 
     task: str
     result: str
@@ -96,7 +96,7 @@ class SessionRecording:
         return pairs
 
 
-# --- Skill Models (machine-generated from analysis) ---
+# --- Recipe Models (machine-generated from analysis) ---
 
 
 @dataclass
@@ -106,7 +106,7 @@ class MoneyRequest:
     This is identified by the analyzer as THE request that contains
     the data the user asked for.
 
-    DEPRECATED: Use SkillRequest for new skills. Kept for backward compatibility.
+    DEPRECATED: Use RecipeRequest for new recipes. Kept for backward compatibility.
     """
 
     endpoint: str  # URL path (without domain)
@@ -122,7 +122,7 @@ class MoneyRequest:
 
 
 @dataclass
-class SkillRequest:
+class RecipeRequest:
     """Complete request specification for direct browser execution.
 
     Contains everything needed to execute fetch() from within the browser:
@@ -193,7 +193,7 @@ class SkillRequest:
     def get_safe_headers(self) -> dict[str, str]:
         """Return headers with sensitive ones removed (not redacted).
 
-        Use this when saving skills to avoid storing auth tokens.
+        Use this when saving recipes to avoid storing auth tokens.
         """
         return strip_sensitive_headers(self.headers)
 
@@ -215,11 +215,11 @@ class SkillRequest:
 
 
 @dataclass
-class SkillAuth:
-    """Authentication configuration for API-key based skills.
+class RecipeAuth:
+    """Authentication configuration for API-key based recipes.
 
-    For skills that require API keys or tokens rather than browser cookies.
-    Keys are stored separately (env vars or secure store), not in skill YAML.
+    For recipes that require API keys or tokens rather than browser cookies.
+    Keys are stored separately (env vars or secure store), not in recipe YAML.
     """
 
     auth_type: Literal["header", "query", "bearer"] = "header"
@@ -231,7 +231,7 @@ class SkillAuth:
 class AuthRecovery:
     """Configuration for handling authentication failures.
 
-    When a skill request returns 401/403, the runner can:
+    When a recipe request returns 401/403, the runner can:
     1. Navigate to the recovery page
     2. Let the agent re-authenticate
     3. Retry the original request
@@ -256,7 +256,7 @@ class NavigationStep:
 
 
 @dataclass
-class SkillParameter:
+class RecipeParameter:
     """A configurable parameter extracted from the API call."""
 
     name: str
@@ -268,8 +268,30 @@ class SkillParameter:
 
 
 @dataclass
-class SkillHints:
-    """Hints for the agent to execute the skill efficiently."""
+class HtmlSnippet:
+    """HTML parsing snippet for fallback extraction when API fails."""
+
+    selector: str  # CSS selector
+    attribute: str | None = None  # Attribute to extract, None for text content
+    description: str = ""
+    example_html: str = ""  # Sample HTML this was trained on
+
+
+@dataclass
+class RecipeIngredients:
+    """What went into making this recipe."""
+
+    model: str = ""
+    provider: str = ""
+    temperature: float = 0.0
+    created_at: datetime = field(default_factory=datetime.now)
+    headless: bool = True
+    duration_seconds: float = 0.0
+
+
+@dataclass
+class RecipeHints:
+    """Hints for the agent to execute the recipe efficiently."""
 
     navigation: list[NavigationStep] = field(default_factory=list)
     money_request: MoneyRequest | None = None
@@ -309,10 +331,10 @@ class FallbackConfig:
 
 
 @dataclass
-class Skill:
-    """A machine-generated browser skill with API hints.
+class Recipe:
+    """A machine-generated browser recipe with API hints.
 
-    Skills are created automatically when:
+    Recipes are created automatically when:
     1. User runs run_browser_agent with learn=True
     2. Agent successfully completes the task by discovering an API
     3. Analyzer identifies the "money request" and extracts parameters
@@ -327,19 +349,29 @@ class Skill:
     original_task: str
 
     # Direct execution configuration
-    request: SkillRequest | None = None
+    request: RecipeRequest | None = None
     auth_recovery: AuthRecovery | None = None
-    skill_auth: SkillAuth | None = None
+    recipe_auth: RecipeAuth | None = None
+
+    # Schemas
+    input_schema: dict[str, Any] = field(default_factory=dict)
+    output_schema: dict[str, Any] = field(default_factory=dict)
+
+    # Fallback HTML parsing
+    html_snippets: list[HtmlSnippet] = field(default_factory=list)
+
+    # What went into making this recipe
+    ingredients: RecipeIngredients = field(default_factory=RecipeIngredients)
 
     # Hint-based execution (legacy)
-    hints: SkillHints = field(default_factory=SkillHints)
-    parameters: list[SkillParameter] = field(default_factory=list)
+    hints: RecipeHints = field(default_factory=RecipeHints)
+    parameters: list[RecipeParameter] = field(default_factory=list)
 
     # Categorization
-    category: SkillCategory = "other"
+    category: RecipeCategory = "other"
     subcategory: str = ""
     tags: list[str] = field(default_factory=list)
-    difficulty: SkillDifficulty = "medium"
+    difficulty: RecipeDifficulty = "medium"
 
     # Rate limiting
     rate_limit_delay_ms: int = 0
@@ -354,12 +386,12 @@ class Skill:
     failure_count: int = 0
     fallback: FallbackConfig = field(default_factory=FallbackConfig)
 
-    # Skill verification status
+    # Recipe verification status
     status: Literal["draft", "verified", "failed"] = "draft"
 
     @property
     def supports_direct_execution(self) -> bool:
-        """Check if this skill supports fast direct execution."""
+        """Check if this recipe supports fast direct execution."""
         return self.request is not None
 
     @property
@@ -386,7 +418,7 @@ class Skill:
         return merged
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert skill to dictionary for serialization."""
+        """Convert recipe to dictionary for serialization."""
         result: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
@@ -404,6 +436,25 @@ class Skill:
             "success_count": self.success_count,
             "failure_count": self.failure_count,
             "status": self.status,
+            "input_schema": self.input_schema,
+            "output_schema": self.output_schema,
+            "html_snippets": [
+                {
+                    "selector": s.selector,
+                    "attribute": s.attribute,
+                    "description": s.description,
+                    "example_html": s.example_html,
+                }
+                for s in self.html_snippets
+            ],
+            "ingredients": {
+                "model": self.ingredients.model,
+                "provider": self.ingredients.provider,
+                "temperature": self.ingredients.temperature,
+                "created_at": self.ingredients.created_at.isoformat() if self.ingredients.created_at else None,
+                "headless": self.ingredients.headless,
+                "duration_seconds": self.ingredients.duration_seconds,
+            },
             "parameters": [
                 {
                     "name": p.name,
@@ -443,11 +494,11 @@ class Skill:
                 "max_retries": self.auth_recovery.max_retries,
             }
 
-        if self.skill_auth:
-            result["skill_auth"] = {
-                "auth_type": self.skill_auth.auth_type,
-                "key_name": self.skill_auth.key_name,
-                "env_var": self.skill_auth.env_var,
+        if self.recipe_auth:
+            result["recipe_auth"] = {
+                "auth_type": self.recipe_auth.auth_type,
+                "key_name": self.recipe_auth.key_name,
+                "env_var": self.recipe_auth.env_var,
             }
 
         # LEGACY: Add hints for backward compatibility
@@ -472,11 +523,39 @@ class Skill:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Skill":
-        """Create skill from dictionary."""
+    def from_dict(cls, data: dict[str, Any]) -> "Recipe":
+        """Create recipe from dictionary."""
+        # Parse html_snippets
+        html_snippets = [
+            HtmlSnippet(
+                selector=s["selector"],
+                attribute=s.get("attribute"),
+                description=s.get("description", ""),
+                example_html=s.get("example_html", ""),
+            )
+            for s in data.get("html_snippets", [])
+        ]
+
+        # Parse ingredients
+        ing_data = data.get("ingredients", {})
+        created_at = ing_data.get("created_at")
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        elif created_at is None:
+            created_at = datetime.now()
+
+        ingredients = RecipeIngredients(
+            model=ing_data.get("model", ""),
+            provider=ing_data.get("provider", ""),
+            temperature=ing_data.get("temperature", 0.0),
+            created_at=created_at,
+            headless=ing_data.get("headless", True),
+            duration_seconds=ing_data.get("duration_seconds", 0.0),
+        )
+
         # Parse parameters
         parameters = [
-            SkillParameter(
+            RecipeParameter(
                 name=p["name"],
                 type=p.get("type", "string"),
                 required=p.get("required", False),
@@ -491,7 +570,7 @@ class Skill:
         request = None
         req_data = data.get("request")
         if req_data:
-            request = SkillRequest(
+            request = RecipeRequest(
                 url=req_data["url"],
                 method=req_data.get("method", "GET"),
                 headers=req_data.get("headers", {}),
@@ -513,13 +592,13 @@ class Skill:
                 max_retries=auth_data.get("max_retries", 1),
             )
 
-        skill_auth = None
-        skill_auth_data = data.get("skill_auth")
-        if skill_auth_data:
-            skill_auth = SkillAuth(
-                auth_type=skill_auth_data.get("auth_type", "header"),
-                key_name=skill_auth_data.get("key_name", ""),
-                env_var=skill_auth_data.get("env_var", ""),
+        recipe_auth = None
+        recipe_auth_data = data.get("recipe_auth")
+        if recipe_auth_data:
+            recipe_auth = RecipeAuth(
+                auth_type=recipe_auth_data.get("auth_type", "header"),
+                key_name=recipe_auth_data.get("key_name", ""),
+                env_var=recipe_auth_data.get("env_var", ""),
             )
 
         last_executed_at = data.get("last_executed_at")
@@ -553,7 +632,7 @@ class Skill:
                 sample_response_schema=mr_data.get("sample_response_schema"),
             )
 
-        hints = SkillHints(navigation=navigation, money_request=money_request)
+        hints = RecipeHints(navigation=navigation, money_request=money_request)
 
         # Parse fallback
         fallback_data = data.get("fallback", {})
@@ -579,7 +658,11 @@ class Skill:
             original_task=data.get("original_task", ""),
             request=request,
             auth_recovery=auth_recovery,
-            skill_auth=skill_auth,
+            recipe_auth=recipe_auth,
+            input_schema=data.get("input_schema", {}),
+            output_schema=data.get("output_schema", {}),
+            html_snippets=html_snippets,
+            ingredients=ingredients,
             hints=hints,
             parameters=parameters,
             category=data.get("category", "other"),

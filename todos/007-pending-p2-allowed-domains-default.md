@@ -6,17 +6,17 @@ tags: [code-review, security]
 dependencies: []
 ---
 
-# Default allowed_domains for direct execution skills
+# Default allowed_domains for direct execution recipes
 
 ## Problem Statement
 
-`SkillRequest.allowed_domains` exists but is never populated by the analyzer. Domain allowlisting is effectively disabled for learned skills.
+`RecipeRequest.allowed_domains` exists but is never populated by the analyzer. Domain allowlisting is effectively disabled for learned recipes.
 
 ## Findings
 
-- `SkillRequest.allowed_domains` defaults to empty (allow all). `src/mcp_server_browser_use/skills/models.py:143-144`
-- Analyzer does not set allowed_domains from the request URL. `src/mcp_server_browser_use/skills/analyzer.py:130-142`
-- `validate_domain_allowed` is a no-op when allowlist is empty. `src/mcp_server_browser_use/skills/runner.py:133-140`
+- `RecipeRequest.allowed_domains` defaults to empty (allow all). `src/mcp_server_browser_use/recipes/models.py:143-144`
+- Analyzer does not set allowed_domains from the request URL. `src/mcp_server_browser_use/recipes/analyzer.py:130-142`
+- `validate_domain_allowed` is a no-op when allowlist is empty. `src/mcp_server_browser_use/recipes/runner.py:133-140`
 
 ## Proposed Solutions
 
@@ -53,17 +53,17 @@ dependencies: []
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/models.py:143`
-- `src/mcp_server_browser_use/skills/analyzer.py:130`
-- `src/mcp_server_browser_use/skills/runner.py:133`
+- `src/mcp_server_browser_use/recipes/models.py:143`
+- `src/mcp_server_browser_use/recipes/analyzer.py:130`
+- `src/mcp_server_browser_use/recipes/runner.py:133`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 
-- [ ] Learned skills include a non-empty allowlist by default
+- [ ] Learned recipes include a non-empty allowlist by default
 - [ ] Direct execution rejects domains outside the allowlist
 
 ## Work Log

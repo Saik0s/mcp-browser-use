@@ -54,6 +54,7 @@ _configure_stdio_logging()
 # ruff: noqa: E402 - Intentional late imports after logging configuration
 from browser_use import Agent, BrowserProfile
 from browser_use.browser.profile import ProxySettings
+from browser_use.llm.base import BaseChatModel
 from fastmcp import FastMCP
 from fastmcp.dependencies import CurrentContext, Progress
 from fastmcp.server.context import Context
@@ -64,8 +65,8 @@ from .exceptions import BrowserError, LLMProviderError
 from .observability import TaskRecord, TaskStage, TaskStatus, bind_task_context, clear_task_context, get_task_logger, setup_structured_logging
 from .observability.store import get_task_store
 from .providers import get_llm
+from .recipes import RecipeAnalyzer, RecipeExecutor, RecipeRecorder, RecipeRunner, RecipeStore
 from .research.machine import ResearchMachine
-from .skills import SkillAnalyzer, SkillExecutor, SkillRecorder, SkillRunner, SkillStore
 from .utils import save_execution_result
 
 if TYPE_CHECKING:
@@ -77,7 +78,12 @@ logger = logging.getLogger("mcp_server_browser_use")
 logger.setLevel(getattr(logging, settings.server.logging_level.upper()))
 
 # Global registry of running asyncio tasks for cancellation support
-_running_tasks: dict[str, asyncio.Task] = {}
+_running_tasks: dict[str, asyncio.Task[object]] = {}
+
+
+def _register_task(task_id: str, task: asyncio.Task[object]) -> None:
+    _running_tasks[task_id] = task
+    task.add_done_callback(lambda _: _running_tasks.pop(task_id, None))
 
 
 def serve() -> FastMCP:
@@ -88,23 +94,13 @@ def serve() -> FastMCP:
     server = FastMCP("mcp_server_browser_use")
 
     # Initialize skill components (only when skills feature is enabled)
-    skill_store: SkillStore | None = None
-    skill_executor: SkillExecutor | None = None
-    if settings.skills.enabled:
-        skill_store = SkillStore(directory=settings.skills.directory)
-        skill_executor = SkillExecutor()
+    recipe_store: RecipeStore | None = None
+    recipe_executor: RecipeExecutor | None = None
+    if settings.recipes.enabled:
+        recipe_store = RecipeStore(directory=settings.recipes.directory)
+        recipe_executor = RecipeExecutor()
 
-    def _get_llm_and_profile():
-        """Helper to get LLM instance and browser profile."""
-        llm = get_llm(
-            provider=settings.llm.provider,
-            model=settings.llm.model_name,
-            api_key=settings.llm.get_api_key_for_provider(),
-            base_url=settings.llm.base_url,
-            azure_endpoint=settings.llm.azure_endpoint,
-            azure_api_version=settings.llm.azure_api_version,
-            aws_region=settings.llm.aws_region,
-        )
+    def _get_profile_only() -> BrowserProfile:
         proxy = None
         if settings.browser.proxy_server:
             proxy = ProxySettings(server=settings.browser.proxy_server, bypass=settings.browser.proxy_bypass)
@@ -116,16 +112,28 @@ def serve() -> FastMCP:
         )
         if settings.browser.cdp_url:
             logger.info(f"Using external browser via CDP: {settings.browser.cdp_url}")
-        return llm, profile
+        return profile
+
+    def _get_llm_and_profile():
+        llm = get_llm(
+            provider=settings.llm.provider,
+            model=settings.llm.model_name,
+            api_key=settings.llm.get_api_key_for_provider(),
+            base_url=settings.llm.base_url,
+            azure_endpoint=settings.llm.azure_endpoint,
+            azure_api_version=settings.llm.azure_api_version,
+            aws_region=settings.llm.aws_region,
+        )
+        return llm, _get_profile_only()
 
     @server.tool(task=TaskConfig(mode="optional"))
     async def run_browser_agent(
         task: str,
         max_steps: int | None = None,
-        skill_name: str | None = None,
+        recipe_name: str | None = None,
         skill_params: str | dict | None = None,
         learn: bool = False,
-        save_skill_as: str | None = None,
+        save_recipe_as: str | None = None,
         ctx: Context = CurrentContext(),
         progress: Progress = Progress(),
     ) -> str:
@@ -135,20 +143,20 @@ def serve() -> FastMCP:
         Supports background execution with progress tracking when client requests it.
 
         EXECUTION MODE (default):
-        - When skill_name is provided, hints are injected for efficient navigation.
+        - When recipe_name is provided, hints are injected for efficient navigation.
 
         LEARNING MODE (learn=True):
         - Agent executes with API discovery instructions
         - On success, attempts to extract a reusable skill from the execution
-        - If save_skill_as is provided, saves the learned skill
+        - If save_recipe_as is provided, saves the learned skill
 
         Args:
             task: Natural language description of what to do in the browser
             max_steps: Maximum number of agent steps (default from settings)
-            skill_name: Optional skill name to use for hints (execution mode)
-            skill_params: Optional parameters for the skill (JSON string or dict)
+            recipe_name: Optional recipe name to use for hints (execution mode)
+            skill_params: Optional parameters for the recipe (JSON string or dict)
             learn: Enable learning mode - agent focuses on API discovery
-            save_skill_as: Name to save the learned skill (requires learn=True)
+            save_recipe_as: Name to save the learned skill (requires learn=True)
 
         Returns:
             Result of the browser automation task. In learning mode, includes
@@ -161,7 +169,7 @@ def serve() -> FastMCP:
             task_id=task_id,
             tool_name="run_browser_agent",
             status=TaskStatus.PENDING,
-            input_params={"task": task, "max_steps": max_steps, "skill_name": skill_name, "learn": learn},
+            input_params={"task": task, "max_steps": max_steps, "recipe_name": recipe_name, "learn": learn},
         )
         await task_store.create_task(task_record)
         bind_task_context(task_id, "run_browser_agent")
@@ -171,13 +179,9 @@ def serve() -> FastMCP:
         logger.info(f"Starting browser agent task: {task[:100]}...")
         task_logger.info("task_created", task_preview=task[:100])
 
-        try:
-            llm, profile = _get_llm_and_profile()
-        except LLMProviderError as e:
-            logger.error(f"LLM initialization failed: {e}")
-            await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
-            clear_task_context()
-            return f"Error: {e}"
+        # Get profile immediately (LLM deferred until needed for agent)
+        profile = _get_profile_only()
+        llm: BaseChatModel | None = None
 
         # Mark task as running
         await task_store.update_status(task_id, TaskStatus.RUNNING)
@@ -189,25 +193,25 @@ def serve() -> FastMCP:
         augmented_task = task
         params_dict: dict = {}
 
-        if learn and skill_name:
+        if learn and recipe_name:
             # Can't use both learning and existing skill
-            logger.warning("learn=True ignores skill_name - running in learning mode")
-            skill_name = None
+            logger.warning("learn=True ignores recipe_name - running in learning mode")
+            recipe_name = None
 
-        if learn and skill_executor:
+        if learn and recipe_executor:
             # LEARNING MODE: Inject API discovery instructions
             await ctx.info("Learning mode: Agent will discover APIs")
-            augmented_task = skill_executor.inject_learning_mode(task)
+            augmented_task = recipe_executor.inject_learning_mode(task)
             logger.info("Learning mode enabled - API discovery instructions injected")
         elif learn:
             # Skills disabled - warn and continue without learning
-            await ctx.info("Skills feature disabled - learn parameter ignored")
-            logger.warning("learn=True ignored - skills.enabled is False")
+            await ctx.info("Recipes feature disabled - learn parameter ignored")
+            logger.warning("learn=True ignored - recipes.enabled is False")
             learn = False  # Disable learning for rest of execution
 
-        elif skill_name and settings.skills.enabled and skill_store and skill_executor:
+        elif recipe_name and settings.recipes.enabled and recipe_store and recipe_executor:
             # EXECUTION MODE: Load skill
-            skill = skill_store.load(skill_name)
+            skill = recipe_store.load(recipe_name)
             if skill:
                 # Parse skill params (accepts dict or JSON string)
                 if skill_params:
@@ -246,12 +250,12 @@ def serve() -> FastMCP:
                         await browser_session.start()
 
                         try:
-                            runner = SkillRunner()
+                            runner = RecipeRunner()
                             run_result = await runner.run(skill, merged_params, browser_session)
 
                             if run_result.success:
                                 # Direct execution succeeded!
-                                skill_store.record_usage(skill.name, success=True)
+                                recipe_store.record_usage(skill.name, success=True)
                                 await ctx.info("Direct execution completed")
                                 logger.info(f"Skill direct execution succeeded: {skill.name}")
 
@@ -299,16 +303,16 @@ def serve() -> FastMCP:
                         # Continue to agent execution below
 
                 # Inject hints for agent execution (fallback or non-direct skills)
-                augmented_task = skill_executor.inject_hints(task, skill, merged_params)
+                augmented_task = recipe_executor.inject_hints(task, skill, merged_params)
                 await ctx.info(f"Using skill hints: {skill.name}")
                 logger.info(f"Skill hints injected for: {skill.name}")
             else:
-                await ctx.info(f"Skill not found: {skill_name}")
-                logger.warning(f"Skill not found: {skill_name}")
-        elif skill_name:
+                await ctx.info(f"Recipe not found: {recipe_name}")
+                logger.warning(f"Recipe not found: {recipe_name}")
+        elif recipe_name:
             # Skills disabled - warn and continue without skill
-            await ctx.info("Skills feature disabled - skill_name parameter ignored")
-            logger.warning(f"skill_name='{skill_name}' ignored - skills.enabled is False")
+            await ctx.info("Recipes feature disabled - recipe_name parameter ignored")
+            logger.warning(f"recipe_name='{recipe_name}' ignored - recipes.enabled is False")
 
         steps = max_steps if max_steps is not None else settings.agent.max_steps
         await progress.set_total(steps)
@@ -341,12 +345,22 @@ def serve() -> FastMCP:
             task_logger.debug("step_completed", step=step_num, url=state.url)
 
         # Initialize recorder for learning mode
-        recorder: SkillRecorder | None = None
+        recorder: RecipeRecorder | None = None
         if learn:
-            recorder = SkillRecorder(task=task)
+            recorder = RecipeRecorder(task=task)
 
         # Track recorder attachment for cleanup
         recorder_attached = False
+
+        # Initialize LLM now (only needed for agent execution, not direct recipes)
+        if llm is None:
+            try:
+                llm, _ = _get_llm_and_profile()
+            except LLMProviderError as e:
+                logger.error(f"LLM initialization failed: {e}")
+                await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
+                clear_task_context()
+                return f"Error: {e}"
 
         try:
             agent = Agent(
@@ -363,22 +377,19 @@ def serve() -> FastMCP:
                 await agent.browser_session.start()
                 await recorder.attach(agent.browser_session)
                 recorder_attached = True
-                logger.info("SkillRecorder attached via CDP for network capture")
+                logger.info("RecipeRecorder attached via CDP for network capture")
 
             # Register task for cancellation support
             agent_task = asyncio.create_task(agent.run())
-            _running_tasks[task_id] = agent_task
-            try:
-                result = await agent_task
-            finally:
-                _running_tasks.pop(task_id, None)
+            _register_task(task_id, agent_task)
+            result = await agent_task
 
             final = result.final_result() or "Task completed without explicit result."
 
             # Validate result if skill was used (execution mode)
             is_valid = True
-            if skill and skill_executor and settings.skills.validate_results:
-                is_valid = skill_executor.validate_result(final, skill)
+            if skill and recipe_executor and settings.recipes.validate_results:
+                is_valid = recipe_executor.validate_result(final, skill)
                 if not is_valid:
                     await ctx.info("Skill validation failed - hints may be outdated")
                     logger.warning(f"Skill validation failed for: {skill.name}")
@@ -399,12 +410,12 @@ def serve() -> FastMCP:
                         is_valid = True  # Fallback execution is considered valid
 
             # Record skill usage statistics (execution mode)
-            if skill and skill_store:
-                skill_store.record_usage(skill.name, success=is_valid)
+            if skill and recipe_store:
+                recipe_store.record_usage(skill.name, success=is_valid)
 
             # LEARNING MODE: Attempt to extract skill from execution
-            skill_extraction_result = ""
-            if learn and final and save_skill_as:
+            recipe_extraction_result = ""
+            if learn and final and save_recipe_as:
                 await ctx.info("Analyzing execution for skill extraction...")
 
                 try:
@@ -419,7 +430,7 @@ def serve() -> FastMCP:
                         logger.info(f"Recording captured: {recorder.request_count} requests, {api_count} API calls")
                     else:
                         # Fallback to simplified recording (shouldn't happen in learn mode)
-                        from .skills import SessionRecording
+                        from .recipes import SessionRecording
 
                         recording = SessionRecording(
                             task=task,
@@ -429,30 +440,30 @@ def serve() -> FastMCP:
                         logger.warning("Using simplified recording - recorder was not attached")
 
                     # Analyze with LLM
-                    analyzer = SkillAnalyzer(llm)
+                    analyzer = RecipeAnalyzer(llm)
                     extracted_skill = await analyzer.analyze(recording)
 
-                    if extracted_skill and skill_store:
-                        extracted_skill.name = save_skill_as
-                        skill_store.save(extracted_skill)
-                        skill_extraction_result = f"\n\n[SKILL LEARNED] Saved as '{save_skill_as}'"
-                        await ctx.info(f"Skill saved: {save_skill_as}")
-                        logger.info(f"Skill extracted and saved: {save_skill_as}")
+                    if extracted_skill and recipe_store:
+                        extracted_skill.name = save_recipe_as
+                        recipe_store.save(extracted_skill)
+                        recipe_extraction_result = f"\n\n[RECIPE LEARNED] Saved as '{save_recipe_as}'"
+                        await ctx.info(f"Skill saved: {save_recipe_as}")
+                        logger.info(f"Skill extracted and saved: {save_recipe_as}")
                     else:
-                        skill_extraction_result = "\n\n[SKILL NOT LEARNED] Could not extract API from execution"
+                        recipe_extraction_result = "\n\n[RECIPE NOT LEARNED] Could not extract API from execution"
                         await ctx.info("Could not extract skill - no suitable API found")
                         logger.info("Skill extraction failed - no suitable API found")
 
                 except Exception as e:
                     logger.error(f"Skill extraction failed: {e}")
-                    skill_extraction_result = f"\n\n[SKILL EXTRACTION ERROR] {e}"
+                    recipe_extraction_result = f"\n\n[RECIPE EXTRACTION ERROR] {e}"
 
             # Auto-save result if results_dir is configured
             if settings.server.results_dir:
                 saved_path = save_execution_result(
                     final,
                     prefix=f"agent_{task[:20]}",
-                    metadata={"task": task, "max_steps": steps, "skill": skill_name, "learn": learn},
+                    metadata={"task": task, "max_steps": steps, "skill": recipe_name, "learn": learn},
                 )
                 await ctx.info(f"Saved to: {saved_path.name}")
 
@@ -460,7 +471,7 @@ def serve() -> FastMCP:
             logger.info(f"Agent completed: {final[:100]}...")
 
             # Mark task as completed
-            final_result = final + skill_extraction_result
+            final_result = final + recipe_extraction_result
             await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final_result)
             task_logger.info("task_completed", result_length=len(final_result))
             clear_task_context()
@@ -468,8 +479,8 @@ def serve() -> FastMCP:
 
         except asyncio.CancelledError:
             # Task was cancelled - record failure
-            if skill and skill_store:
-                skill_store.record_usage(skill.name, success=False)
+            if skill and recipe_store:
+                recipe_store.record_usage(skill.name, success=False)
 
             await task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user")
             task_logger.info("task_cancelled")
@@ -478,8 +489,8 @@ def serve() -> FastMCP:
 
         except Exception as e:
             # Record failure if skill was used
-            if skill and skill_store:
-                skill_store.record_usage(skill.name, success=False)
+            if skill and recipe_store:
+                recipe_store.record_usage(skill.name, success=False)
 
             # Mark task as failed
             await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
@@ -568,11 +579,8 @@ def serve() -> FastMCP:
 
             # Register task for cancellation support
             research_task = asyncio.create_task(machine.run())
-            _running_tasks[task_id] = research_task
-            try:
-                report = await research_task
-            finally:
-                _running_tasks.pop(task_id, None)
+            _register_task(task_id, research_task)
+            report = await research_task
 
             # Auto-save result if results_dir is configured and no explicit save path
             if settings.server.results_dir and not save_to_file:
@@ -602,11 +610,11 @@ def serve() -> FastMCP:
             clear_task_context()
             raise
 
-    # --- Skill Management Tools (only registered when skills.enabled) ---
-    if settings.skills.enabled and skill_store:
+    # --- Skill Management Tools (only registered when recipes.enabled) ---
+    if settings.recipes.enabled and recipe_store:
 
         @server.tool()
-        async def skill_list() -> str:
+        async def recipe_list() -> str:
             """
             List all available browser skills.
 
@@ -615,15 +623,15 @@ def serve() -> FastMCP:
             """
             import json
 
-            assert skill_store is not None  # Type narrowing for mypy
-            skills = skill_store.list_all()
+            assert recipe_store is not None  # Type narrowing for mypy
+            skills = recipe_store.list_all()
 
             if not skills:
-                return json.dumps({"skills": [], "message": "No skills found. Use learn=True with save_skill_as to learn new skills."})
+                return json.dumps({"recipes": [], "message": "No recipes found. Use learn=True with save_recipe_as to learn new skills."})
 
             return json.dumps(
                 {
-                    "skills": [
+                    "recipes": [
                         {
                             "name": s.name,
                             "description": s.description,
@@ -633,45 +641,93 @@ def serve() -> FastMCP:
                         }
                         for s in skills
                     ],
-                    "skills_directory": str(skill_store.directory),
+                    "skills_directory": str(recipe_store.directory),
                 },
                 indent=2,
             )
 
         @server.tool()
-        async def skill_get(skill_name: str) -> str:
+        async def recipe_get(recipe_name: str) -> str:
             """
             Get full details of a specific skill.
 
             Args:
-                skill_name: Name of the skill to retrieve
+                recipe_name: Name of the recipe to retrieve
 
             Returns:
                 Full skill definition as YAML
             """
-            assert skill_store is not None  # Type narrowing for mypy
-            skill = skill_store.load(skill_name)
+            assert recipe_store is not None  # Type narrowing for mypy
+            skill = recipe_store.load(recipe_name)
 
             if not skill:
-                return f"Error: Skill '{skill_name}' not found in {skill_store.directory}"
+                return f"Error: Recipe '{recipe_name}' not found in {recipe_store.directory}"
 
-            return skill_store.to_yaml(skill)
+            return recipe_store.to_yaml(skill)
 
         @server.tool()
-        async def skill_delete(skill_name: str) -> str:
+        async def recipe_delete(recipe_name: str) -> str:
             """
-            Delete a skill by name.
+            Delete a recipe by name.
 
             Args:
-                skill_name: Name of the skill to delete
+                recipe_name: Name of the recipe to delete
 
             Returns:
                 Success or error message
             """
-            assert skill_store is not None  # Type narrowing for mypy
-            if skill_store.delete(skill_name):
-                return f"Skill '{skill_name}' deleted successfully"
-            return f"Error: Skill '{skill_name}' not found"
+            assert recipe_store is not None  # Type narrowing for mypy
+            if recipe_store.delete(recipe_name):
+                return f"Recipe '{recipe_name}' deleted successfully"
+            return f"Error: Recipe '{recipe_name}' not found"
+
+        @server.tool()
+        async def recipe_run_direct(
+            recipe_name: str,
+            params: dict[str, str] | None = None,
+        ) -> str:
+            """Execute a recipe directly via API (~2s) without browser automation.
+
+            Args:
+                recipe_name: Name of the recipe to execute
+                params: Parameters for the recipe (e.g., {"query": "search term"})
+
+            Returns:
+                The extracted result or error message
+            """
+            assert recipe_store is not None
+            from browser_use import BrowserSession
+
+            recipe = recipe_store.load(recipe_name)
+            if not recipe:
+                return f"Error: Recipe '{recipe_name}' not found"
+
+            if not recipe.supports_direct_execution:
+                return f"Error: Recipe '{recipe_name}' does not support direct execution"
+
+            profile = _get_profile_only()
+            browser_session = BrowserSession(browser_profile=profile)
+            await browser_session.start()
+
+            try:
+                runner = RecipeRunner()
+                result = await runner.run(recipe, params or {}, browser_session)
+
+                if result.success:
+                    recipe_store.record_usage(recipe_name, success=True)
+                    import json
+
+                    if isinstance(result.data, (dict, list)):
+                        return json.dumps(result.data, indent=2)
+                    return str(result.data) if result.data else "Success (no data)"
+                else:
+                    recipe_store.record_usage(recipe_name, success=False)
+                    error = result.error or "Unknown error"
+                    if result.auth_recovery_triggered:
+                        return f"Error: Auth required - {error}"
+                    return f"Error: {error}"
+            finally:
+                await browser_session.stop()
 
     # --- Observability Tools ---
 
@@ -941,10 +997,10 @@ def serve() -> FastMCP:
         return JSONResponse(json.loads(result))
 
     # REST API endpoints for skills
-    def _get_skill_store() -> SkillStore | None:
+    def _get_recipe_store() -> RecipeStore | None:
         """Get skill store instance if skills are enabled."""
-        if settings.skills.enabled:
-            return SkillStore(directory=settings.skills.directory)
+        if settings.recipes.enabled:
+            return RecipeStore(directory=settings.recipes.directory)
         return None
 
     @server.custom_route(path="/api/skills", methods=["GET"])
@@ -953,15 +1009,15 @@ def serve() -> FastMCP:
 
         from starlette.responses import JSONResponse
 
-        store = _get_skill_store()
+        store = _get_recipe_store()
         if not store:
-            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
 
         try:
             skills = store.list_all()
             return JSONResponse(
                 {
-                    "skills": [
+                    "recipes": [
                         {
                             "name": s.name,
                             "description": s.description,
@@ -985,22 +1041,22 @@ def serve() -> FastMCP:
 
         from starlette.responses import JSONResponse
 
-        store = _get_skill_store()
+        store = _get_recipe_store()
         if not store:
-            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
 
-        skill_name = request.path_params["name"]
+        recipe_name = request.path_params["name"]
 
         try:
-            skill = store.load(skill_name)
+            skill = store.load(recipe_name)
             if not skill:
-                return JSONResponse({"error": f"Skill '{skill_name}' not found"}, status_code=404)
+                return JSONResponse({"error": f"Recipe '{recipe_name}' not found"}, status_code=404)
 
             # Return skill as JSON (convert from dict representation)
             skill_dict = skill.to_dict()
             return JSONResponse(skill_dict)
         except Exception as e:
-            logger.error(f"Failed to get skill {skill_name}: {e}")
+            logger.error(f"Failed to get skill {recipe_name}: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @server.custom_route(path="/api/skills/{name}", methods=["DELETE"])
@@ -1008,18 +1064,18 @@ def serve() -> FastMCP:
         """REST endpoint for skill deletion."""
         from starlette.responses import JSONResponse
 
-        store = _get_skill_store()
+        store = _get_recipe_store()
         if not store:
-            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
 
-        skill_name = request.path_params["name"]
+        recipe_name = request.path_params["name"]
 
         try:
-            if store.delete(skill_name):
-                return JSONResponse({"success": True, "message": f"Skill '{skill_name}' deleted successfully"})
-            return JSONResponse({"error": f"Skill '{skill_name}' not found"}, status_code=404)
+            if store.delete(recipe_name):
+                return JSONResponse({"success": True, "message": f"Recipe '{recipe_name}' deleted successfully"})
+            return JSONResponse({"error": f"Recipe '{recipe_name}' not found"}, status_code=404)
         except Exception as e:
-            logger.error(f"Failed to delete skill {skill_name}: {e}")
+            logger.error(f"Failed to delete skill {recipe_name}: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @server.custom_route(path="/api/skills/{name}/run", methods=["POST"])
@@ -1040,10 +1096,10 @@ def serve() -> FastMCP:
         """
         from starlette.responses import JSONResponse
 
-        if not settings.skills.enabled:
-            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+        if not settings.recipes.enabled:
+            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
 
-        skill_name = request.path_params["name"]
+        recipe_name = request.path_params["name"]
 
         try:
             body = await request.json()
@@ -1054,7 +1110,7 @@ def serve() -> FastMCP:
         params = body.get("params", {})
 
         # Build task description
-        task_desc = f"Use the {skill_name} skill"
+        task_desc = f"Use the {recipe_name} skill"
         if url:
             task_desc += f" at {url}"
 
@@ -1063,16 +1119,16 @@ def serve() -> FastMCP:
         task_store = get_task_store()
         task_record = TaskRecord(
             task_id=task_id,
-            tool_name=f"skill_run:{skill_name}",
+            tool_name=f"skill_run:{recipe_name}",
             status=TaskStatus.PENDING,
-            input_params={"skill_name": skill_name, "url": url, "params": params},
+            input_params={"recipe_name": recipe_name, "url": url, "params": params},
         )
         await task_store.create_task(task_record)
 
         # Start execution in background
         async def execute_skill() -> None:
-            """Background task to execute the skill."""
-            bind_task_context(task_id, f"skill_run:{skill_name}")
+            """Background task to execute the recipe."""
+            bind_task_context(task_id, f"skill_run:{recipe_name}")
             task_logger = get_task_logger()
 
             try:
@@ -1089,11 +1145,11 @@ def serve() -> FastMCP:
             try:
                 # Build agent with skill hints
                 augmented_task = task_desc
-                if skill_store:
-                    skill = skill_store.load(skill_name)
-                    if skill and skill_executor:
+                if recipe_store:
+                    skill = recipe_store.load(recipe_name)
+                    if skill and recipe_executor:
                         merged_params = skill.merge_params(params)
-                        augmented_task = skill_executor.inject_hints(task_desc, skill, merged_params)
+                        augmented_task = recipe_executor.inject_hints(task_desc, skill, merged_params)
 
                 agent = Agent(
                     task=augmented_task,
@@ -1104,28 +1160,24 @@ def serve() -> FastMCP:
 
                 # Register for cancellation
                 agent_task = asyncio.create_task(agent.run())
-                _running_tasks[task_id] = agent_task
-
-                try:
-                    result = await agent_task
-                finally:
-                    _running_tasks.pop(task_id, None)
+                _register_task(task_id, agent_task)
+                result = await agent_task
 
                 final = result.final_result() or "Task completed without explicit result."
 
                 # Record usage
-                if skill_store:
-                    skill_store.record_usage(skill_name, success=True)
+                if recipe_store:
+                    recipe_store.record_usage(recipe_name, success=True)
 
                 await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final)
                 task_logger.info("task_completed", result_length=len(final))
 
             except Exception as e:
-                if skill_store:
-                    skill_store.record_usage(skill_name, success=False)
+                if recipe_store:
+                    recipe_store.record_usage(recipe_name, success=False)
                 await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
                 task_logger.error("task_failed", error=str(e))
-                logger.error(f"Skill {skill_name} execution failed: {e}")
+                logger.error(f"Skill {recipe_name} execution failed: {e}")
 
             finally:
                 clear_task_context()
@@ -1133,12 +1185,12 @@ def serve() -> FastMCP:
         # Start background task and keep reference to prevent garbage collection
         bg_task = asyncio.create_task(execute_skill())
         # Store task reference to prevent GC
-        _running_tasks[f"{task_id}_bg"] = bg_task
+        _register_task(f"{task_id}_bg", bg_task)
 
         return JSONResponse(
             {
                 "task_id": task_id,
-                "skill_name": skill_name,
+                "recipe_name": recipe_name,
                 "message": "Skill execution started",
                 "status_url": f"/api/tasks/{task_id}",
             },
@@ -1152,7 +1204,7 @@ def serve() -> FastMCP:
         Request body:
         {
             "task": "Learn how to search on GitHub",
-            "skill_name": "github_search"  # Optional - name to save learned skill
+            "recipe_name": "github_search"  # Optional - name to save learned skill
         }
 
         Returns:
@@ -1163,8 +1215,8 @@ def serve() -> FastMCP:
         """
         from starlette.responses import JSONResponse
 
-        if not settings.skills.enabled:
-            return JSONResponse({"error": "Skills feature is disabled"}, status_code=503)
+        if not settings.recipes.enabled:
+            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
 
         try:
             body = await request.json()
@@ -1175,7 +1227,7 @@ def serve() -> FastMCP:
         if not task_description:
             return JSONResponse({"error": "Missing required field: task"}, status_code=400)
 
-        skill_name = body.get("skill_name")
+        recipe_name = body.get("recipe_name")
 
         # Create task ID for tracking
         task_id = str(uuid.uuid4())
@@ -1184,7 +1236,7 @@ def serve() -> FastMCP:
             task_id=task_id,
             tool_name="learn",
             status=TaskStatus.PENDING,
-            input_params={"task": task_description, "skill_name": skill_name},
+            input_params={"task": task_description, "recipe_name": recipe_name},
         )
         await task_store.create_task(task_record)
 
@@ -1208,11 +1260,11 @@ def serve() -> FastMCP:
             try:
                 # Inject learning mode instructions
                 augmented_task = task_description
-                if skill_executor:
-                    augmented_task = skill_executor.inject_learning_mode(task_description)
+                if recipe_executor:
+                    augmented_task = recipe_executor.inject_learning_mode(task_description)
 
                 # Initialize recorder for learning mode
-                recorder = SkillRecorder(task=task_description)
+                recorder = RecipeRecorder(task=task_description)
 
                 agent = Agent(
                     task=augmented_task,
@@ -1228,18 +1280,14 @@ def serve() -> FastMCP:
 
                 # Register for cancellation
                 agent_task = asyncio.create_task(agent.run())
-                _running_tasks[task_id] = agent_task
-
-                try:
-                    result = await agent_task
-                finally:
-                    _running_tasks.pop(task_id, None)
+                _register_task(task_id, agent_task)
+                result = await agent_task
 
                 final = result.final_result() or "Task completed without explicit result."
 
                 # Extract skill from execution
-                skill_extraction_result = ""
-                if final and skill_name and skill_store:
+                recipe_extraction_result = ""
+                if final and recipe_name and recipe_store:
                     try:
                         await recorder.finalize()
                         await recorder.detach()
@@ -1248,25 +1296,25 @@ def serve() -> FastMCP:
                         recording = recorder.get_recording(result=final)
 
                         # Analyze with LLM
-                        analyzer = SkillAnalyzer(llm)
-                        extracted_skill = await analyzer.analyze(recording)
+                        analyzer = RecipeAnalyzer(llm)
+                        extracted_recipe = await analyzer.analyze(recording)
 
-                        if extracted_skill:
-                            extracted_skill.name = skill_name
-                            skill_store.save(extracted_skill)
-                            skill_extraction_result = f"\n\n[SKILL LEARNED] Saved as '{skill_name}'"
-                            logger.info(f"Skill extracted and saved: {skill_name}")
+                        if extracted_recipe:
+                            extracted_recipe.name = recipe_name
+                            recipe_store.save(extracted_recipe)
+                            recipe_extraction_result = f"\n\n[RECIPE LEARNED] Saved as '{recipe_name}'"
+                            logger.info(f"Recipe extracted and saved: {recipe_name}")
                         else:
-                            skill_extraction_result = "\n\n[SKILL NOT LEARNED] Could not extract API from execution"
+                            recipe_extraction_result = "\n\n[RECIPE NOT LEARNED] Could not extract API from execution"
 
                     except Exception as e:
-                        logger.error(f"Skill extraction failed: {e}")
-                        skill_extraction_result = f"\n\n[SKILL EXTRACTION ERROR] {e}"
+                        logger.error(f"Recipe extraction failed: {e}")
+                        recipe_extraction_result = f"\n\n[RECIPE EXTRACTION ERROR] {e}"
                     finally:
                         if recorder_attached:
                             await recorder.detach()
 
-                final_result = final + skill_extraction_result
+                final_result = final + recipe_extraction_result
                 await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final_result)
                 task_logger.info("task_completed", result_length=len(final_result))
 
@@ -1280,14 +1328,13 @@ def serve() -> FastMCP:
 
         # Start background task and keep reference to prevent garbage collection
         bg_task = asyncio.create_task(execute_learn())
-        # Store task reference to prevent GC
-        _running_tasks[f"{task_id}_bg"] = bg_task
+        _register_task(f"{task_id}_bg", bg_task)
 
         return JSONResponse(
             {
                 "task_id": task_id,
                 "learning_task": task_description,
-                "skill_name": skill_name,
+                "recipe_name": recipe_name,
                 "message": "Learning session started",
                 "status_url": f"/api/tasks/{task_id}",
             },
@@ -1515,7 +1562,7 @@ STDIO_DEPRECATION_MESSAGE = """
 ║       "mcpServers": {                                                        ║
 ║         "browser-use": {                                                     ║
 ║           "type": "streamable-http",                                         ║
-║           "url": "http://localhost:8000/mcp"                                 ║
+║           "url": "http://localhost:8383/mcp"                                 ║
 ║         }                                                                    ║
 ║       }                                                                      ║
 ║     }                                                                        ║
@@ -1525,7 +1572,7 @@ STDIO_DEPRECATION_MESSAGE = """
 ║       "mcpServers": {                                                        ║
 ║         "browser-use": {                                                     ║
 ║           "command": "npx",                                                  ║
-║           "args": ["mcp-remote", "http://localhost:8000/mcp"]                ║
+║           "args": ["mcp-remote", "http://localhost:8383/mcp"]                ║
 ║         }                                                                    ║
 ║       }                                                                      ║
 ║     }                                                                        ║

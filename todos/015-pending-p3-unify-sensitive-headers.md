@@ -10,12 +10,12 @@ dependencies: []
 
 ## Problem Statement
 
-Recorder redacts a different set of sensitive headers than SkillRequest strips on save. This inconsistency can leave tokens in skill files or reduce redaction coverage.
+Recorder redacts a different set of sensitive headers than RecipeRequest strips on save. This inconsistency can leave tokens in recipe files or reduce redaction coverage.
 
 ## Findings
 
-- Recorder redaction list includes `x-xsrf-token` and `x-access-token`. `src/mcp_server_browser_use/skills/recorder.py:31-43`
-- Skill saving strip list differs. `src/mcp_server_browser_use/skills/models.py:17-29`
+- Recorder redaction list includes `x-xsrf-token` and `x-access-token`. `src/mcp_server_browser_use/recipes/recorder.py:31-43`
+- Recipe saving strip list differs. `src/mcp_server_browser_use/recipes/models.py:17-29`
 
 ## Proposed Solutions
 
@@ -52,12 +52,12 @@ Recorder redacts a different set of sensitive headers than SkillRequest strips o
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/recorder.py:31`
-- `src/mcp_server_browser_use/skills/models.py:17`
+- `src/mcp_server_browser_use/recipes/recorder.py:31`
+- `src/mcp_server_browser_use/recipes/models.py:17`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 

@@ -14,7 +14,7 @@ HTML response extraction relies on BeautifulSoup, but the dependency is not decl
 
 ## Findings
 
-- HTML parsing uses BeautifulSoup. `src/mcp_server_browser_use/skills/runner.py:606-623`
+- HTML parsing uses BeautifulSoup. `src/mcp_server_browser_use/recipes/runner.py:606-623`
 - `bs4` is not in `pyproject.toml` dependencies. `pyproject.toml:18-33`
 
 ## Proposed Solutions
@@ -52,12 +52,12 @@ HTML response extraction relies on BeautifulSoup, but the dependency is not decl
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/runner.py:606`
+- `src/mcp_server_browser_use/recipes/runner.py:606`
 - `pyproject.toml:18`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 

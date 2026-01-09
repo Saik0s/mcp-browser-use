@@ -1,11 +1,11 @@
-# Skills System Security & Correctness Fixes
+# Recipes System Security & Correctness Fixes
 
 **Type:** `fix` | **Priority:** P0 | **Complexity:** Low-Medium
 **Created:** 2025-12-17 | **Revised:** 2025-12-18
 
 ## Overview
 
-Targeted fixes for critical security vulnerabilities and correctness issues in the browser automation skills system. This revision prioritizes minimal, focused changes over architectural redesign.
+Targeted fixes for critical security vulnerabilities and correctness issues in the browser automation recipes system. This revision prioritizes minimal, focused changes over architectural redesign.
 
 **Estimated Changes:** ~150 lines (down from 1,180 in original plan)
 
@@ -34,7 +34,7 @@ Targeted fixes for critical security vulnerabilities and correctness issues in t
 
 ### Phase 1: SSRF Hardening (~60 lines)
 
-**File:** `src/mcp_server_browser_use/skills/runner.py`
+**File:** `src/mcp_server_browser_use/recipes/runner.py`
 
 ```python
 import asyncio
@@ -129,8 +129,8 @@ async def validate_url_safe(url: str) -> None:
 ```
 
 **Integration points:**
-- Call `validate_url_safe()` in `SkillRunner.run()` before execution
-- Call during skill analysis before saving
+- Call `validate_url_safe()` in `RecipeRunner.run()` before execution
+- Call during recipe analysis before saving
 
 **Acceptance Criteria:**
 - [ ] Blocks IPv6 private ranges (::1, fc00::/7, fe80::/10)
@@ -145,7 +145,7 @@ async def validate_url_safe(url: str) -> None:
 
 ### Phase 2: Header Redaction (~15 lines)
 
-**File:** `src/mcp_server_browser_use/skills/models.py`
+**File:** `src/mcp_server_browser_use/recipes/models.py`
 
 ```python
 # Add to module level
@@ -155,7 +155,7 @@ SENSITIVE_HEADERS = frozenset({
 })
 
 def strip_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
-    """Remove sensitive headers before saving skill."""
+    """Remove sensitive headers before saving recipe."""
     return {
         k: v for k, v in headers.items()
         if k.lower() not in SENSITIVE_HEADERS
@@ -163,8 +163,8 @@ def strip_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
 ```
 
 **Integration points:**
-- Call in `SkillStore.save()` before writing YAML
-- Call in `SkillAnalyzer` before creating skill spec
+- Call in `RecipeStore.save()` before writing YAML
+- Call in `RecipeAnalyzer` before creating recipe spec
 
 **Acceptance Criteria:**
 - [ ] Sensitive headers never saved to YAML
@@ -175,7 +175,7 @@ def strip_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
 
 ### Phase 3: Domain Allowlist Enforcement (~20 lines)
 
-**File:** `src/mcp_server_browser_use/skills/runner.py`
+**File:** `src/mcp_server_browser_use/recipes/runner.py`
 
 ```python
 from urllib.parse import urlparse
@@ -206,8 +206,8 @@ def validate_domain_allowed(url: str, allowed_domains: list[str]) -> None:
 ```
 
 **Integration points:**
-- Call in `SkillRunner.run()` after SSRF check
-- `allowed_domains` already exists in `SkillRequest` model
+- Call in `RecipeRunner.run()` after SSRF check
+- `allowed_domains` already exists in `RecipeRequest` model
 
 **Acceptance Criteria:**
 - [ ] Enforces domain allowlist if non-empty
@@ -220,7 +220,7 @@ def validate_domain_allowed(url: str, allowed_domains: list[str]) -> None:
 
 **Dependency:** `uv add jmespath`
 
-**File:** `src/mcp_server_browser_use/skills/runner.py`
+**File:** `src/mcp_server_browser_use/recipes/runner.py`
 
 ```python
 import jmespath
@@ -249,7 +249,7 @@ def extract_data(data: Any, expression: str | None) -> Any:
 
 ### Phase 5: URL Encoding Fix (~15 lines)
 
-**File:** `src/mcp_server_browser_use/skills/runner.py`
+**File:** `src/mcp_server_browser_use/recipes/runner.py`
 
 ```python
 from urllib.parse import urlparse, urlencode, quote, parse_qs, urlunparse
@@ -293,27 +293,27 @@ def build_url(template: str, params: dict[str, Any]) -> str:
 
 ---
 
-### Phase 6: Skill Status Field (~5 lines)
+### Phase 6: Recipe Status Field (~5 lines)
 
-**File:** `src/mcp_server_browser_use/skills/models.py`
+**File:** `src/mcp_server_browser_use/recipes/models.py`
 
 ```python
 from typing import Literal
 
 @dataclass
-class Skill:
+class Recipe:
     # ... existing fields ...
     status: Literal["draft", "verified", "failed"] = "draft"
 ```
 
 **Usage:**
-- New skills created as `"draft"`
+- New recipes created as `"draft"`
 - Set to `"verified"` on first successful execution
 - Set to `"failed"` after 3 consecutive failures
 
 **Acceptance Criteria:**
 - [ ] Status persisted in YAML
-- [ ] Can filter skills by status in `skill_list` tool
+- [ ] Can filter recipes by status in `recipe_list` tool
 
 ---
 
@@ -398,9 +398,9 @@ def test_domain_allowlist(url: str, allowlist: list[str], should_allow: bool):
 
 | File | Action | Lines |
 |------|--------|-------|
-| `skills/runner.py` | Modify | ~100 |
-| `skills/models.py` | Modify | ~20 |
-| `tests/test_skills_security.py` | Create | ~80 |
+| `recipes/runner.py` | Modify | ~100 |
+| `recipes/models.py` | Modify | ~20 |
+| `tests/test_recipes_security.py` | Create | ~80 |
 | `pyproject.toml` | Add jmespath | ~1 |
 
 **Total:** ~200 lines (vs 1,180 original)
@@ -410,8 +410,8 @@ def test_domain_allowlist(url: str, allowlist: list[str], should_allow: bool):
 ## Migration Notes
 
 - No breaking changes to MCP tool interface
-- No breaking changes to skill YAML format
-- Existing skills work unchanged (allowlist empty = allow all)
+- No breaking changes to recipe YAML format
+- Existing recipes work unchanged (allowlist empty = allow all)
 - `jmespath` is superset of current JSONPath subset
 
 ---
@@ -437,3 +437,4 @@ These items from the original plan are deferred until actually needed:
 - [JMESPath Tutorial](https://jmespath.org/tutorial.html)
 - [Python ipaddress Module](https://docs.python.org/3/library/ipaddress.html)
 - Review feedback: Code Simplicity, Kieran Python, Security Sentinel, Architecture Strategist
+- `docs/recipes-design.md`

@@ -14,15 +14,15 @@ Direct execution builds the fetch URL using naive string replacement, while the 
 
 ## Findings
 
-- `SkillRequest.build_url` uses plain `str.replace` with no encoding. `src/mcp_server_browser_use/skills/models.py:146-151`
-- `_execute_fetch` uses `request.build_url`, bypassing the encoder in `skills.runner.build_url`. `src/mcp_server_browser_use/skills/runner.py:451`
-- `skills.runner.build_url` already implements proper encoding and is covered by tests. `src/mcp_server_browser_use/skills/runner.py:156-187`
+- `RecipeRequest.build_url` uses plain `str.replace` with no encoding. `src/mcp_server_browser_use/recipes/models.py:146-151`
+- `_execute_fetch` uses `request.build_url`, bypassing the encoder in `recipes.runner.build_url`. `src/mcp_server_browser_use/recipes/runner.py:451`
+- `recipes.runner.build_url` already implements proper encoding and is covered by tests. `src/mcp_server_browser_use/recipes/runner.py:156-187`
 
 ## Proposed Solutions
 
 ### Option 1: Use the encoded helper everywhere
 
-**Approach:** Replace `request.build_url` usage with `skills.runner.build_url` in `_execute_fetch` and/or update `SkillRequest.build_url` to call the helper.
+**Approach:** Replace `request.build_url` usage with `recipes.runner.build_url` in `_execute_fetch` and/or update `RecipeRequest.build_url` to call the helper.
 
 **Pros:** Consistent URL handling; aligns with tests.
 
@@ -34,7 +34,7 @@ Direct execution builds the fetch URL using naive string replacement, while the 
 
 ---
 
-### Option 2: Remove `SkillRequest.build_url`
+### Option 2: Remove `RecipeRequest.build_url`
 
 **Approach:** Remove or deprecate the method to force use of the shared encoder.
 
@@ -53,13 +53,13 @@ Direct execution builds the fetch URL using naive string replacement, while the 
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/models.py:146`
-- `src/mcp_server_browser_use/skills/runner.py:451`
-- `src/mcp_server_browser_use/skills/runner.py:156`
+- `src/mcp_server_browser_use/recipes/models.py:146`
+- `src/mcp_server_browser_use/recipes/runner.py:451`
+- `src/mcp_server_browser_use/recipes/runner.py:156`
 
 ## Resources
 
-- `tests/test_skills_security.py` (URL encoding tests)
+- `tests/test_recipes_security.py` (URL encoding tests)
 
 ## Acceptance Criteria
 
@@ -81,4 +81,4 @@ Direct execution builds the fetch URL using naive string replacement, while the 
 
 ## Notes
 
-- Consider adding a unit test for `SkillRequest.build_url` or removing it.
+- Consider adding a unit test for `RecipeRequest.build_url` or removing it.

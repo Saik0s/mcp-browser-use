@@ -1,17 +1,17 @@
-"""Security tests for the skills system.
+"""Security tests for the recipes system.
 
 Tests SSRF protection, header stripping, domain allowlisting, and URL encoding.
 """
 
 import pytest
 
-from mcp_server_browser_use.skills.models import (
+from mcp_server_browser_use.recipes.models import (
     SENSITIVE_HEADERS,
-    Skill,
-    SkillRequest,
+    Recipe,
+    RecipeRequest,
     strip_sensitive_headers,
 )
-from mcp_server_browser_use.skills.runner import (
+from mcp_server_browser_use.recipes.runner import (
     _is_ip_blocked,
     _normalize_ip,
     build_url,
@@ -147,9 +147,9 @@ def test_strip_sensitive_headers_case_insensitive() -> None:
     assert result == {"Content-Type": "text/plain"}
 
 
-def test_skill_request_get_safe_headers() -> None:
-    """Test SkillRequest.get_safe_headers() strips sensitive headers."""
-    request = SkillRequest(
+def test_recipe_request_get_safe_headers() -> None:
+    """Test RecipeRequest.get_safe_headers() strips sensitive headers."""
+    request = RecipeRequest(
         url="https://api.example.com/data",
         headers={
             "Authorization": "Bearer token",
@@ -163,13 +163,13 @@ def test_skill_request_get_safe_headers() -> None:
     assert safe == {"Content-Type": "application/json", "X-Request-ID": "12345"}
 
 
-def test_skill_to_dict_strips_headers() -> None:
-    """Test Skill.to_dict() uses stripped headers, not redacted."""
-    skill = Skill(
-        name="test-skill",
-        description="A test skill",
+def test_recipe_to_dict_strips_headers() -> None:
+    """Test Recipe.to_dict() uses stripped headers, not redacted."""
+    recipe = Recipe(
+        name="test-recipe",
+        description="A test recipe",
         original_task="Test task",
-        request=SkillRequest(
+        request=RecipeRequest(
             url="https://api.example.com/data",
             headers={
                 "Authorization": "Bearer secret",
@@ -177,7 +177,7 @@ def test_skill_to_dict_strips_headers() -> None:
             },
         ),
     )
-    data = skill.to_dict()
+    data = recipe.to_dict()
 
     # Headers should be stripped, not redacted
     assert "Authorization" not in data["request"]["headers"]
@@ -296,51 +296,51 @@ def test_extract_data_invalid_expression() -> None:
         extract_data({}, "invalid[[[")
 
 
-# --- Skill Status Field Tests ---
+# --- Recipe Status Field Tests ---
 
 
-def test_skill_default_status() -> None:
-    """Test new skills have 'draft' status by default."""
-    skill = Skill(name="test", description="test", original_task="test")
-    assert skill.status == "draft"
+def test_recipe_default_status() -> None:
+    """Test new recipes have 'draft' status by default."""
+    recipe = Recipe(name="test", description="test", original_task="test")
+    assert recipe.status == "draft"
 
 
-def test_skill_status_serialization() -> None:
+def test_recipe_status_serialization() -> None:
     """Test status is serialized and deserialized correctly."""
-    skill = Skill(name="test", description="test", original_task="test", status="verified")
-    data = skill.to_dict()
+    recipe = Recipe(name="test", description="test", original_task="test", status="verified")
+    data = recipe.to_dict()
     assert data["status"] == "verified"
 
-    restored = Skill.from_dict(data)
+    restored = Recipe.from_dict(data)
     assert restored.status == "verified"
 
 
-def test_skill_status_from_dict_default() -> None:
+def test_recipe_status_from_dict_default() -> None:
     """Test from_dict defaults to 'draft' if status missing."""
     data = {"name": "test", "description": "test", "original_task": "test"}
-    skill = Skill.from_dict(data)
-    assert skill.status == "draft"
+    recipe = Recipe.from_dict(data)
+    assert recipe.status == "draft"
 
 
 # --- Integration Tests ---
 
 
-def test_skill_allowed_domains_serialization() -> None:
+def test_recipe_allowed_domains_serialization() -> None:
     """Test allowed_domains is serialized and deserialized correctly."""
-    skill = Skill(
+    recipe = Recipe(
         name="test",
         description="test",
         original_task="test",
-        request=SkillRequest(
+        request=RecipeRequest(
             url="https://api.example.com/data",
             allowed_domains=["example.com", "api.example.com"],
         ),
     )
 
-    data = skill.to_dict()
+    data = recipe.to_dict()
     assert data["request"]["allowed_domains"] == ["example.com", "api.example.com"]
 
-    restored = Skill.from_dict(data)
+    restored = Recipe.from_dict(data)
     assert restored.request is not None
     assert restored.request.allowed_domains == ["example.com", "api.example.com"]
 
