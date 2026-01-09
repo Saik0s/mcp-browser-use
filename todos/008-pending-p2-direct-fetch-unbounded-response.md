@@ -14,8 +14,8 @@ Direct fetch returns the full response body from the browser with no size limit.
 
 ## Findings
 
-- `_execute_fetch` returns `raw_body` without size checks. `src/mcp_server_browser_use/skills/runner.py:500-512`
-- Recorder enforces `MAX_BODY_SIZE`, but direct execution does not. `src/mcp_server_browser_use/skills/recorder.py:56-57`
+- `_execute_fetch` returns `raw_body` without size checks. `src/mcp_server_browser_use/recipes/runner.py:500-512`
+- Recorder enforces `MAX_BODY_SIZE`, but direct execution does not. `src/mcp_server_browser_use/recipes/recorder.py:56-57`
 
 ## Proposed Solutions
 
@@ -35,7 +35,7 @@ Direct fetch returns the full response body from the browser with no size limit.
 
 ### Option 2: Add configurable response limit
 
-**Approach:** Introduce `max_response_bytes` in settings or SkillRequest.
+**Approach:** Introduce `max_response_bytes` in settings or RecipeRequest.
 
 **Pros:** Flexible per skill/environment.
 
@@ -52,12 +52,12 @@ Direct fetch returns the full response body from the browser with no size limit.
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/runner.py:500`
-- `src/mcp_server_browser_use/skills/recorder.py:56`
+- `src/mcp_server_browser_use/recipes/runner.py:500`
+- `src/mcp_server_browser_use/recipes/recorder.py:56`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 

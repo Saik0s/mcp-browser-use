@@ -6,16 +6,16 @@ tags: [code-review, security, api]
 dependencies: []
 ---
 
-# Enforce auth_token on skills HTTP endpoints
+# Enforce auth_token on recipes HTTP endpoints
 
 ## Problem Statement
 
-ServerSettings exposes `auth_token` for non-localhost access, but skills HTTP routes do not enforce it. If the server binds beyond localhost, remote callers can list/delete/run skills and trigger learning with local browser cookies.
+ServerSettings exposes `auth_token` for non-localhost access, but recipes HTTP routes do not enforce it. If the server binds beyond localhost, remote callers can list/delete/run recipes and trigger learning with local browser cookies.
 
 ## Findings
 
 - `src/mcp_server_browser_use/config.py:185-195` defines `auth_token`, but no route guards exist.
-- `/api/skills/*` and `/api/learn` handlers accept requests without authentication. `src/mcp_server_browser_use/server.py:950` `src/mcp_server_browser_use/server.py:1148`
+- `/api/recipes/*` and `/api/learn` handlers accept requests without authentication. `src/mcp_server_browser_use/server.py:950` `src/mcp_server_browser_use/server.py:1148`
 
 ## Proposed Solutions
 
@@ -35,7 +35,7 @@ ServerSettings exposes `auth_token` for non-localhost access, but skills HTTP ro
 
 ### Option 2: Add per-route auth checks
 
-**Approach:** Add Authorization header checks in each skills/learn route.
+**Approach:** Add Authorization header checks in each recipes/learn route.
 
 **Pros:** Small, isolated changes.
 
@@ -58,11 +58,11 @@ ServerSettings exposes `auth_token` for non-localhost access, but skills HTTP ro
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 
-- [ ] Unauthorized requests to `/api/skills` and `/api/learn` return 401/403 when `auth_token` is set
+- [ ] Unauthorized requests to `/api/recipes` and `/api/learn` return 401/403 when `auth_token` is set
 - [ ] Authorized requests succeed
 - [ ] Tests cover authenticated and unauthenticated cases
 
@@ -73,7 +73,7 @@ ServerSettings exposes `auth_token` for non-localhost access, but skills HTTP ro
 **By:** Codex
 
 **Actions:**
-- Reviewed server config and skills HTTP routes
+- Reviewed server config and recipes HTTP routes
 - Confirmed missing auth enforcement
 
 **Learnings:**
@@ -81,4 +81,4 @@ ServerSettings exposes `auth_token` for non-localhost access, but skills HTTP ro
 
 ## Notes
 
-- Consider whether auth should apply to all HTTP routes, not just skills.
+- Consider whether auth should apply to all HTTP routes, not just recipes.

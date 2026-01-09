@@ -17,7 +17,7 @@ def client(monkeypatch):
     monkeypatch.setenv("MCP_LLM_MODEL_NAME", "gpt-4")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("MCP_BROWSER_HEADLESS", "true")
-    monkeypatch.setenv("MCP_SKILLS_ENABLED", "true")
+    monkeypatch.setenv("MCP_RECIPES_ENABLED", "true")
 
     # Reload config module to pick up new env vars
     import importlib
@@ -40,8 +40,8 @@ def client(monkeypatch):
 
 
 @pytest.fixture
-def client_skills_disabled(monkeypatch):
-    """Create a synchronous HTTP client with skills disabled."""
+def client_recipes_disabled(monkeypatch):
+    """Create a synchronous HTTP client with recipes disabled."""
     # Set environment variables for testing
     monkeypatch.setenv("MCP_LLM_PROVIDER", "openai")
     monkeypatch.setenv("MCP_LLM_MODEL_NAME", "gpt-4")
@@ -55,8 +55,8 @@ def client_skills_disabled(monkeypatch):
 
     importlib.reload(mcp_server_browser_use.config)
 
-    # Directly disable skills in the loaded settings
-    mcp_server_browser_use.config.settings.skills.enabled = False
+    # Directly disable recipes in the loaded settings
+    mcp_server_browser_use.config.settings.recipes.enabled = False
 
     # Update settings reference in server module before reloading
     import mcp_server_browser_use.server
@@ -180,72 +180,72 @@ class TestViewerHtmlEndpoint:
         assert "<html" in content.lower() or "<!doctype" in content.lower()
 
 
-class TestSkillsListEndpoint:
-    """Test /api/skills endpoint."""
+class TestRecipesListEndpoint:
+    """Test /api/recipes endpoint."""
 
-    def test_skills_list_when_enabled(self, client):
-        """Should return skills list when feature is enabled."""
-        response = client.get("/api/skills")
+    def test_recipes_list_when_enabled(self, client):
+        """Should return recipes list when feature is enabled."""
+        response = client.get("/api/recipes")
         assert response.status_code == 200
 
         data = response.json()
-        assert "skills" in data
+        assert "recipes" in data
         assert "count" in data
-        assert "skills_directory" in data
-        assert isinstance(data["skills"], list)
+        assert "recipes_directory" in data
+        assert isinstance(data["recipes"], list)
 
-    def test_skills_list_disabled_returns_error(self, client_skills_disabled):
-        """Should return error when skills feature is disabled."""
-        response = client_skills_disabled.get("/api/skills")
+    def test_recipes_list_disabled_returns_error(self, client_recipes_disabled):
+        """Should return error when recipes feature is disabled."""
+        response = client_recipes_disabled.get("/api/recipes")
         assert response.status_code == 503
 
-    def test_skills_list_structure(self, client):
-        """Skills list should have proper structure."""
-        response = client.get("/api/skills")
+    def test_recipes_list_structure(self, client):
+        """Recipes list should have proper structure."""
+        response = client.get("/api/recipes")
         data = response.json()
 
-        for skill in data["skills"]:
-            assert "name" in skill
-            assert "description" in skill
-            assert "success_rate" in skill
-            assert "usage_count" in skill
+        for recipe in data["recipes"]:
+            assert "name" in recipe
+            assert "description" in recipe
+            assert "success_rate" in recipe
+            assert "usage_count" in recipe
 
 
-class TestSkillGetEndpoint:
-    """Test /api/skills/{name} GET endpoint."""
+class TestRecipeGetEndpoint:
+    """Test /api/recipes/{name} GET endpoint."""
 
-    def test_skill_get_not_found(self, client):
-        """Should return 404 for non-existent skill."""
-        response = client.get("/api/skills/nonexistent_skill")
+    def test_recipe_get_not_found(self, client):
+        """Should return 404 for non-existent recipe."""
+        response = client.get("/api/recipes/nonexistent_recipe")
         assert response.status_code == 404
 
-    def test_skill_get_disabled_returns_error(self, client_skills_disabled):
-        """Should return error when skills feature is disabled."""
-        response = client_skills_disabled.get("/api/skills/any_skill")
+    def test_recipe_get_disabled_returns_error(self, client_recipes_disabled):
+        """Should return error when recipes feature is disabled."""
+        response = client_recipes_disabled.get("/api/recipes/any_recipe")
         assert response.status_code == 503
 
 
-class TestSkillDeleteEndpoint:
-    """Test /api/skills/{name} DELETE endpoint."""
+class TestRecipeDeleteEndpoint:
+    """Test /api/recipes/{name} DELETE endpoint."""
 
-    def test_skill_delete_not_found(self, client):
-        """Should return 404 when skill doesn't exist."""
-        response = client.delete("/api/skills/nonexistent_skill")
+    def test_recipe_delete_not_found(self, client):
+        """Should return 404 when recipe doesn't exist."""
+        response = client.delete("/api/recipes/nonexistent_recipe")
         assert response.status_code == 404
 
-    def test_skill_delete_disabled_returns_error(self, client_skills_disabled):
-        """Should return error when skills feature is disabled."""
-        response = client_skills_disabled.delete("/api/skills/any_skill")
+    def test_recipe_delete_disabled_returns_error(self, client_recipes_disabled):
+        """Should return error when recipes feature is disabled."""
+        response = client_recipes_disabled.delete("/api/recipes/any_recipe")
         assert response.status_code == 503
 
 
-class TestSkillRunEndpoint:
-    """Test /api/skills/{name}/run POST endpoint."""
+class TestRecipeRunEndpoint:
+    """Test /api/recipes/{name}/run POST endpoint."""
 
-    def test_skill_run_success_with_minimal_params(self, client):
-        """Should successfully start skill execution with minimal params."""
-        response = client.post("/api/skills/test_skill/run", json={})
-        # Should return 202 (Accepted) for async task or 404 if skill not found
+    def test_recipe_run_success_with_minimal_params(self, client):
+        """Should successfully start recipe execution with minimal params."""
+        response = client.post("/api/recipes/test_recipe/run", json={})
+        # Should return 202 (Accepted) for async task or 404 if recipe not found
         assert response.status_code in (202, 404)
 
         if response.status_code == 202:
@@ -253,18 +253,18 @@ class TestSkillRunEndpoint:
             assert "task_id" in data
             assert "message" in data
 
-    def test_skill_run_with_url_and_params(self, client):
+    def test_recipe_run_with_url_and_params(self, client):
         """Should accept URL and params in request body."""
         payload = {
             "url": "https://example.com",
             "params": {"param1": "value1"},
         }
-        response = client.post("/api/skills/test_skill/run", json=payload)
+        response = client.post("/api/recipes/test_recipe/run", json=payload)
         assert response.status_code in (202, 404)
 
-    def test_skill_run_disabled_returns_error(self, client_skills_disabled):
-        """Should return error when skills feature is disabled."""
-        response = client_skills_disabled.post("/api/skills/test_skill/run", json={})
+    def test_recipe_run_disabled_returns_error(self, client_recipes_disabled):
+        """Should return error when recipes feature is disabled."""
+        response = client_recipes_disabled.post("/api/recipes/test_recipe/run", json={})
         assert response.status_code == 503
 
 
@@ -286,23 +286,23 @@ class TestLearnEndpoint:
         assert "task_id" in data
         assert "learning_task" in data
 
-    def test_learn_success_with_skill_name(self, client):
-        """Should accept optional skill_name parameter."""
+    def test_learn_success_with_recipe_name(self, client):
+        """Should accept optional recipe_name parameter."""
         payload = {
             "task": "Learn to search GitHub",
-            "skill_name": "github_search",
+            "recipe_name": "github_search",
         }
         response = client.post("/api/learn", json=payload)
         assert response.status_code == 202
 
         data = response.json()
         assert "task_id" in data
-        assert data["skill_name"] == "github_search"
+        assert data["recipe_name"] == "github_search"
 
-    def test_learn_disabled_returns_error(self, client_skills_disabled):
-        """Should return error when skills feature is disabled."""
+    def test_learn_disabled_returns_error(self, client_recipes_disabled):
+        """Should return error when recipes feature is disabled."""
         payload = {"task": "Test task"}
-        response = client_skills_disabled.post("/api/learn", json=payload)
+        response = client_recipes_disabled.post("/api/learn", json=payload)
         assert response.status_code == 503
 
 
@@ -358,7 +358,7 @@ class TestApiResponseConsistency:
         endpoints = [
             ("/api/health", "get"),
             ("/api/tasks", "get"),
-            ("/api/skills", "get"),
+            ("/api/recipes", "get"),
             ("/dashboard", "get"),
             ("/", "get"),
         ]

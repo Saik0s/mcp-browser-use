@@ -1,4 +1,4 @@
-"""Prompts for skill learning and execution.
+"""Prompts for recipe learning and execution.
 
 Learning Mode: Agent is instructed to discover and use APIs, not DOM scraping.
 Analysis Mode: LLM identifies the "money request" from recorded network traffic.
@@ -36,17 +36,17 @@ Success criteria:
 
 If you cannot find an API (data is rendered server-side with no API):
 - Report that no suitable API was found
-- This means the task cannot be learned as a skill
+- This means the task cannot be learned as a recipe
 """
 
 
-# --- Skill Analysis Prompt ---
-# LLM analyzes recorded network traffic to extract a skill
+# --- Recipe Analysis Prompt ---
+# LLM analyzes recorded network traffic to extract a recipe
 
-ANALYSIS_SYSTEM_PROMPT = """You are a browser automation expert analyzing network traffic to extract reusable skills.
+ANALYSIS_SYSTEM_PROMPT = """You are a browser automation expert analyzing network traffic to extract reusable recipes.
 
 Your task is to identify the "money request" - the single API call that returns the data the user asked for.
-This request will be executed DIRECTLY via browser fetch() for fast skill replay.
+This request will be executed DIRECTLY via browser fetch() for fast recipe replay.
 
 A good money request:
 - Returns JSON data that matches what the user asked for
@@ -73,8 +73,8 @@ Output a JSON object with:
         "trigger_on_status": [401, 403],
         "recovery_page": "URL to navigate if auth fails (e.g., login page)"
     },
-    "skill_name_suggestion": "suggested-skill-name",
-    "skill_description": "What this skill does"
+    "recipe_name_suggestion": "suggested-recipe-name",
+    "recipe_description": "What this recipe does"
 }
 
 IMPORTANT:
@@ -100,7 +100,7 @@ def get_analysis_prompt(task: str, result: str, api_calls: list[dict]) -> str:
         api_calls: List of API call summaries from recorder
 
     Returns:
-        Formatted prompt for skill analysis
+        Formatted prompt for recipe analysis
     """
     # Format API calls for the prompt
     api_calls_text = ""
@@ -116,7 +116,7 @@ def get_analysis_prompt(task: str, result: str, api_calls: list[dict]) -> str:
         if call.get("response_body"):
             api_calls_text += f"   Response Body (truncated): {call['response_body'][:1000]}...\n"
 
-    return f"""Analyze this browser session to extract a reusable skill.
+    return f"""Analyze this browser session to extract a reusable recipe.
 
 ORIGINAL TASK:
 {task}
@@ -135,20 +135,20 @@ Return your analysis as JSON.
 
 
 # --- Hint Injection Prompt ---
-# This is PREPENDED to the user's task when executing with a skill
+# This is PREPENDED to the user's task when executing with a recipe
 
 
-def get_execution_hints(skill_name: str, hints_text: str) -> str:
-    """Generate execution hints from a skill.
+def get_execution_hints(recipe_name: str, hints_text: str) -> str:
+    """Generate execution hints from a recipe.
 
     Args:
-        skill_name: Name of the skill being used
-        hints_text: Formatted hints from SkillHints.to_prompt()
+        recipe_name: Name of the recipe being used
+        hints_text: Formatted hints from RecipeHints.to_prompt()
 
     Returns:
         Formatted hints to prepend to task
     """
-    return f"""SKILL HINTS (from previous successful execution of "{skill_name}"):
+    return f"""RECIPE HINTS (from previous successful execution of "{recipe_name}"):
 
 {hints_text}
 

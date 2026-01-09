@@ -6,22 +6,22 @@ tags: [code-review, performance, api]
 dependencies: []
 ---
 
-# Use direct execution in /api/skills/{name}/run
+# Use direct execution in /api/recipes/{name}/run
 
 ## Problem Statement
 
-REST skill execution always uses the agent path, even when a skill supports direct execution. This misses the fast-path and increases latency.
+REST recipe execution always uses the agent path, even when a recipe supports direct execution. This misses the fast-path and increases latency.
 
 ## Findings
 
-- API skill run builds an Agent with hints only. `src/mcp_server_browser_use/server.py:1089-1103`
-- Direct execution path exists in `run_browser_agent` but not in REST `api_skill_run`.
+- API recipe run builds an Agent with hints only. `src/mcp_server_browser_use/server.py:1089-1103`
+- Direct execution path exists in `run_browser_agent` but not in REST `api_recipe_run`.
 
 ## Proposed Solutions
 
-### Option 1: Reuse SkillRunner in api_skill_run
+### Option 1: Reuse RecipeRunner in api_recipe_run
 
-**Approach:** If skill supports direct execution, attempt direct fetch first; fall back to agent on failure.
+**Approach:** If recipe supports direct execution, attempt direct fetch first; fall back to agent on failure.
 
 **Pros:** Faster; consistent behavior with run_browser_agent.
 
@@ -56,11 +56,11 @@ REST skill execution always uses the agent path, even when a skill supports dire
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 
-- [ ] REST skill run uses direct execution when available
+- [ ] REST recipe run uses direct execution when available
 - [ ] Agent fallback remains functional
 
 ## Work Log
@@ -70,7 +70,7 @@ REST skill execution always uses the agent path, even when a skill supports dire
 **By:** Codex
 
 **Actions:**
-- Compared REST skill run vs run_browser_agent paths
+- Compared REST recipe run vs run_browser_agent paths
 
 **Learnings:**
 - Direct execution is not used in REST path

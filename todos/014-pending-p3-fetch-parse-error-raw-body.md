@@ -14,7 +14,7 @@ When JSON parsing fails in the browser fetch helper, the code tries to clone the
 
 ## Findings
 
-- `response.json()` runs before `response.clone().text()`, so the body may already be consumed. `src/mcp_server_browser_use/skills/runner.py:554-566`
+- `response.json()` runs before `response.clone().text()`, so the body may already be consumed. `src/mcp_server_browser_use/recipes/runner.py:554-566`
 
 ## Proposed Solutions
 
@@ -51,11 +51,11 @@ When JSON parsing fails in the browser fetch helper, the code tries to clone the
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/runner.py:554`
+- `src/mcp_server_browser_use/recipes/runner.py:554`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 

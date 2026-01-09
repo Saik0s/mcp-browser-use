@@ -6,26 +6,26 @@ tags: [code-review, quality]
 dependencies: []
 ---
 
-# Strengthen skill execution result validation
+# Strengthen recipe execution result validation
 
 ## Problem Statement
 
-Skill validation only checks for non-empty output. Outdated hints or incorrect results can still be marked as success and skew usage stats.
+Recipe validation only checks for non-empty output. Outdated hints or incorrect results can still be marked as success and skew usage stats.
 
 ## Findings
 
-- Validation is a non-empty string check. `src/mcp_server_browser_use/skills/executor.py:49-71`
-- `settings.skills.validate_results` defaults to true but has weak logic. `src/mcp_server_browser_use/config.py:213-215`
+- Validation is a non-empty string check. `src/mcp_server_browser_use/recipes/executor.py:49-71`
+- `settings.recipes.validate_results` defaults to true but has weak logic. `src/mcp_server_browser_use/config.py:213-215`
 
 ## Proposed Solutions
 
 ### Option 1: Validate against extract_path/schema
 
-**Approach:** If `skill.request.extract_path` exists, require extracted data to be non-empty and valid.
+**Approach:** If `recipe.request.extract_path` exists, require extracted data to be non-empty and valid.
 
 **Pros:** Better signal; minimal change.
 
-**Cons:** Only applies to direct execution skills.
+**Cons:** Only applies to direct execution recipes.
 
 **Effort:** Small
 
@@ -35,7 +35,7 @@ Skill validation only checks for non-empty output. Outdated hints or incorrect r
 
 ### Option 2: Support custom validation rules
 
-**Approach:** Add optional regex or JSON schema to Skill definitions.
+**Approach:** Add optional regex or JSON schema to Recipe definitions.
 
 **Pros:** Flexible; works for legacy hints.
 
@@ -52,12 +52,12 @@ Skill validation only checks for non-empty output. Outdated hints or incorrect r
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/executor.py:49`
+- `src/mcp_server_browser_use/recipes/executor.py:49`
 - `src/mcp_server_browser_use/config.py:213`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 

@@ -7,7 +7,7 @@ Commands:
 - logs: View server logs
 - install: Install to Claude Desktop config
 - config: View or modify configuration
-- skill: Manage browser skills (list, get, delete)
+- recipe: Manage browser recipes (list, get, delete)
 """
 
 import json
@@ -22,7 +22,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .config import APP_NAME, CONFIG_FILE, get_default_results_dir, load_config_file, save_config_file, settings
-from .skills import SkillStore
+from .recipes import RecipeStore
 
 
 def get_state_dir() -> Path:
@@ -309,7 +309,7 @@ def call(
     """Call a tool on the running server.
 
     Examples:
-        mcp-server-browser-use call skill_list
+        mcp-server-browser-use call recipe_list
         mcp-server-browser-use call run_browser_agent task="Go to google.com"
         mcp-server-browser-use call run_deep_research topic="AI trends 2025"
     """
@@ -367,7 +367,8 @@ def call(
 def install() -> None:
     """Install the MCP server to Claude Desktop configuration.
 
-    Configures Claude Desktop to run mcp-server-browser-use via stdio transport.
+    Configures Claude Desktop to use mcp-remote bridge to the HTTP server.
+    Requires: npx (Node.js), server running via 'mcp-server-browser-use server'
     """
     console.print("[bold blue]Installing to Claude Desktop...[/bold blue]")
 
@@ -391,12 +392,11 @@ def install() -> None:
     data = json.loads(config_path.read_text())
     mcp_servers = data.get("mcpServers", {})
 
-    cwd = Path.cwd()
+    url = f"http://{settings.server.host}:{settings.server.port}/mcp"
 
     server_config = {
-        "command": "uv",
-        "args": ["run", "mcp-server-browser-use"],
-        "cwd": str(cwd),
+        "command": "npx",
+        "args": ["mcp-remote", url],
     }
 
     mcp_servers["browser-use"] = server_config
@@ -404,7 +404,10 @@ def install() -> None:
 
     config_path.write_text(json.dumps(data, indent=2))
     console.print(f"[green]Configured 'browser-use' server in {config_path}[/green]")
-    console.print("[yellow]Restart Claude Desktop to apply changes.[/yellow]")
+    console.print(f"[dim]Bridge URL: {url}[/dim]")
+    console.print("[yellow]Before using:[/yellow]")
+    console.print("  1. Start server: [bold]mcp-server-browser-use server[/bold]")
+    console.print("  2. Restart Claude Desktop")
 
 
 @app.command("config")
@@ -478,75 +481,75 @@ def config_cmd(
     console.print(f"[red]Unknown action: {action}. Use: view, set, path, save[/red]")
 
 
-# --- Skill Management Commands ---
+# --- Recipe Management Commands ---
 
-skill_app = typer.Typer(help="Manage browser skills")
-app.add_typer(skill_app, name="skill")
+recipe_app = typer.Typer(help="Manage browser recipes")
+app.add_typer(recipe_app, name="recipe")
 
 
-@skill_app.command("list")
-def skill_list() -> None:
-    """List all available skills."""
-    store = SkillStore(directory=settings.skills.directory)
-    skills = store.list_all()
+@recipe_app.command("list")
+def recipe_list() -> None:
+    """List all available recipes."""
+    store = RecipeStore(directory=settings.recipes.directory)
+    recipes = store.list_all()
 
-    if not skills:
-        console.print(f"[yellow]No skills found in {store.directory}[/yellow]")
-        console.print("\n[dim]Create skills manually or copy examples from:[/dim]")
-        console.print("[dim]  examples/skills/[/dim]")
+    if not recipes:
+        console.print(f"[yellow]No recipes found in {store.directory}[/yellow]")
+        console.print("\n[dim]Create recipes manually or copy examples from:[/dim]")
+        console.print("[dim]  examples/recipes/[/dim]")
         return
 
-    table = Table(title=f"Browser Skills ({store.directory})")
+    table = Table(title=f"Browser Recipes ({store.directory})")
     table.add_column("Name", style="cyan")
     table.add_column("Description", style="white")
     table.add_column("Success Rate", style="green")
     table.add_column("Usage", style="dim")
     table.add_column("Last Used", style="dim")
 
-    for s in skills:
-        usage = s.success_count + s.failure_count
-        rate = f"{s.success_rate * 100:.0f}%" if usage > 0 else "-"
-        last = s.last_used.strftime("%Y-%m-%d") if s.last_used else "-"
-        table.add_row(s.name, s.description[:40], rate, str(usage), last)
+    for r in recipes:
+        usage = r.success_count + r.failure_count
+        rate = f"{r.success_rate * 100:.0f}%" if usage > 0 else "-"
+        last = r.last_used.strftime("%Y-%m-%d") if r.last_used else "-"
+        table.add_row(r.name, r.description[:40], rate, str(usage), last)
 
     console.print(table)
 
 
-@skill_app.command("get")
-def skill_get(
-    name: str = typer.Argument(..., help="Skill name"),
+@recipe_app.command("get")
+def recipe_get(
+    name: str = typer.Argument(..., help="Recipe name"),
 ) -> None:
-    """Show full details of a skill."""
-    store = SkillStore(directory=settings.skills.directory)
-    skill = store.load(name)
+    """Show full details of a recipe."""
+    store = RecipeStore(directory=settings.recipes.directory)
+    recipe = store.load(name)
 
-    if not skill:
-        console.print(f"[red]Skill not found: {name}[/red]")
-        console.print(f"[dim]Skills directory: {store.directory}[/dim]")
+    if not recipe:
+        console.print(f"[red]Recipe not found: {name}[/red]")
+        console.print(f"[dim]Recipes directory: {store.directory}[/dim]")
         raise typer.Exit(1)
 
-    console.print(Panel(store.to_yaml(skill), title=f"Skill: {name}", expand=False))
+    console.print(Panel(store.to_yaml(recipe), title=f"Recipe: {name}", expand=False))
 
 
-@skill_app.command("delete")
-def skill_delete(
-    name: str = typer.Argument(..., help="Skill name to delete"),
+@recipe_app.command("delete")
+def recipe_delete(
+    name: str = typer.Argument(..., help="Recipe name to delete"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
-    """Delete a skill."""
-    store = SkillStore(directory=settings.skills.directory)
+    """Delete a recipe."""
+    store = RecipeStore(directory=settings.recipes.directory)
 
     if not store.exists(name):
-        console.print(f"[red]Skill not found: {name}[/red]")
+        console.print(f"[red]Recipe not found: {name}[/red]")
         raise typer.Exit(1)
 
     if not force:
-        if not typer.confirm(f"Delete skill '{name}'?"):
+        if not typer.confirm(f"Delete recipe '{name}'?"):
             console.print("[dim]Cancelled[/dim]")
             return
 
     store.delete(name)
-    console.print(f"[green]Skill '{name}' deleted[/green]")
+    console.print(f"[green]Recipe '{name}' deleted[/green]")
 
 
 # --- Observability Commands ---

@@ -6,16 +6,16 @@ tags: [code-review, reliability]
 dependencies: []
 ---
 
-# Make SkillStore writes atomic and concurrency-safe
+# Make RecipeStore writes atomic and concurrency-safe
 
 ## Problem Statement
 
-Skill YAML files are written directly with no atomic rename or locking. Concurrent save/record_usage calls can corrupt files or drop usage counts.
+Recipe YAML files are written directly with no atomic rename or locking. Concurrent save/record_usage calls can corrupt files or drop usage counts.
 
 ## Findings
 
-- Direct write to final path. `src/mcp_server_browser_use/skills/store.py:95-99`
-- `record_usage` is read-modify-write with no lock. `src/mcp_server_browser_use/skills/store.py:152-169`
+- Direct write to final path. `src/mcp_server_browser_use/recipes/store.py:95-99`
+- `record_usage` is read-modify-write with no lock. `src/mcp_server_browser_use/recipes/store.py:152-169`
 
 ## Proposed Solutions
 
@@ -52,12 +52,12 @@ Skill YAML files are written directly with no atomic rename or locking. Concurre
 ## Technical Details
 
 **Affected files:**
-- `src/mcp_server_browser_use/skills/store.py:95`
-- `src/mcp_server_browser_use/skills/store.py:152`
+- `src/mcp_server_browser_use/recipes/store.py:95`
+- `src/mcp_server_browser_use/recipes/store.py:152`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 
@@ -71,7 +71,7 @@ Skill YAML files are written directly with no atomic rename or locking. Concurre
 **By:** Codex
 
 **Actions:**
-- Reviewed SkillStore read/write flows
+- Reviewed RecipeStore read/write flows
 - Identified read-modify-write race
 
 **Learnings:**

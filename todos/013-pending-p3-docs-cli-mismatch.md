@@ -6,22 +6,22 @@ tags: [code-review, docs]
 dependencies: []
 ---
 
-# Align skills documentation with CLI guidance
+# Align recipes documentation with CLI guidance
 
 ## Problem Statement
 
-Docs state skills are machine-generated, while CLI suggests manual creation or copying examples. This creates confusion about supported workflows.
+Docs state recipes are machine-generated, while CLI suggests manual creation or copying examples. This creates confusion about supported workflows.
 
 ## Findings
 
-- Docs: skills are machine-generated only. `docs/skills-design.md:3-10`
+- Docs: recipes are machine-generated only. `docs/recipes-design.md:3-10`
 - CLI suggests manual creation. `src/mcp_server_browser_use/cli.py:493-496`
 
 ## Proposed Solutions
 
 ### Option 1: Update CLI messaging
 
-**Approach:** Replace manual creation suggestion with guidance to use `learn=True` and `save_skill_as`.
+**Approach:** Replace manual creation suggestion with guidance to use `learn=True` and `save_recipe_as`.
 
 **Pros:** Aligns with design docs.
 
@@ -33,9 +33,9 @@ Docs state skills are machine-generated, while CLI suggests manual creation or c
 
 ---
 
-### Option 2: Update docs to allow manual skills
+### Option 2: Update docs to allow manual recipes
 
-**Approach:** Document manual skill authoring as advanced feature.
+**Approach:** Document manual recipe authoring as advanced feature.
 
 **Pros:** Supports power users.
 
@@ -52,12 +52,12 @@ Docs state skills are machine-generated, while CLI suggests manual creation or c
 ## Technical Details
 
 **Affected files:**
-- `docs/skills-design.md:3`
+- `docs/recipes-design.md:3`
 - `src/mcp_server_browser_use/cli.py:493`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 
@@ -77,4 +77,4 @@ Docs state skills are machine-generated, while CLI suggests manual creation or c
 
 ## Notes
 
-- Decide if manual skills are officially supported.
+- Decide if manual recipes are officially supported.

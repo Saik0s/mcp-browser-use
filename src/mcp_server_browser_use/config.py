@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import PydanticBaseSettingsSource
 
 # --- Paths ---
 
@@ -93,7 +94,25 @@ ProviderType = Literal[
 ]
 
 
-class LLMSettings(BaseSettings):
+class MCPBaseSettings(BaseSettings):
+    """Base settings where environment variables override init values.
+
+    This matches the documented priority: env > config file > defaults.
+    """
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (env_settings, init_settings, dotenv_settings, file_secret_settings)
+
+
+class LLMSettings(MCPBaseSettings):
     """LLM provider configuration."""
 
     model_config = SettingsConfigDict(env_prefix="MCP_LLM_")
@@ -149,7 +168,7 @@ class LLMSettings(BaseSettings):
         return self.provider not in NO_KEY_PROVIDERS
 
 
-class BrowserSettings(BaseSettings):
+class BrowserSettings(MCPBaseSettings):
     """Browser configuration."""
 
     model_config = SettingsConfigDict(env_prefix="MCP_BROWSER_")
@@ -171,7 +190,7 @@ class BrowserSettings(BaseSettings):
         return self
 
 
-class AgentSettings(BaseSettings):
+class AgentSettings(MCPBaseSettings):
     """Agent behavior configuration."""
 
     model_config = SettingsConfigDict(env_prefix="MCP_AGENT_")
@@ -183,7 +202,7 @@ class AgentSettings(BaseSettings):
 TransportType = Literal["stdio", "streamable-http", "sse"]
 
 
-class ServerSettings(BaseSettings):
+class ServerSettings(MCPBaseSettings):
     """Server configuration."""
 
     model_config = SettingsConfigDict(env_prefix="MCP_SERVER_")
@@ -196,7 +215,7 @@ class ServerSettings(BaseSettings):
     auth_token: SecretStr | None = Field(default=None, description="Bearer token for non-localhost access")
 
 
-class ResearchSettings(BaseSettings):
+class ResearchSettings(MCPBaseSettings):
     """Deep research configuration."""
 
     model_config = SettingsConfigDict(env_prefix="MCP_RESEARCH_")
@@ -206,17 +225,17 @@ class ResearchSettings(BaseSettings):
     search_timeout: int = Field(default=120, description="Timeout per search in seconds")
 
 
-class SkillsSettings(BaseSettings):
-    """Browser skills configuration."""
+class RecipesSettings(MCPBaseSettings):
+    """Browser recipes configuration."""
 
-    model_config = SettingsConfigDict(env_prefix="MCP_SKILLS_")
+    model_config = SettingsConfigDict(env_prefix="MCP_RECIPES_")
 
-    enabled: bool = Field(default=False, description="Enable skills feature (beta - disabled by default)")
-    directory: str | None = Field(default=None, description="Directory containing skill YAML files (default: ~/.config/browser-skills)")
-    validate_results: bool = Field(default=True, description="Validate execution results against skill success indicators")
+    enabled: bool = Field(default=False, description="Enable recipes feature (beta - disabled by default)")
+    directory: str | None = Field(default=None, description="Directory containing recipe YAML files (default: ~/.config/browser-recipes)")
+    validate_results: bool = Field(default=True, description="Validate execution results against recipe success indicators")
 
 
-class AppSettings(BaseSettings):
+class AppSettings(MCPBaseSettings):
     """Root application settings.
 
     Priority: Environment Variables > Config File > Defaults
@@ -229,14 +248,16 @@ class AppSettings(BaseSettings):
     agent: AgentSettings = Field(default_factory=AgentSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
     research: ResearchSettings = Field(default_factory=ResearchSettings)
-    skills: SkillsSettings = Field(default_factory=SkillsSettings)
+    recipes: RecipesSettings = Field(default_factory=RecipesSettings)
 
     def save(self) -> Path:
         """Save current configuration to file (excluding secrets)."""
         data = self.model_dump(mode="json", exclude_none=True)
         # Remove secret values from saved config
-        if "llm" in data and "api_key" in data["llm"]:
-            del data["llm"]["api_key"]
+        if "llm" in data:
+            data["llm"].pop("api_key", None)
+        if "server" in data:
+            data["server"].pop("auth_token", None)
         save_config_file(data)
         return CONFIG_FILE
 

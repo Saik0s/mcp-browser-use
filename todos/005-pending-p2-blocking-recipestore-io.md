@@ -6,16 +6,16 @@ tags: [code-review, performance]
 dependencies: []
 ---
 
-# Avoid blocking file I/O in async skill endpoints
+# Avoid blocking file I/O in async recipe endpoints
 
 ## Problem Statement
 
-Async HTTP endpoints call synchronous SkillStore I/O directly. Under load, YAML reads/writes block the event loop and delay other requests.
+Async HTTP endpoints call synchronous RecipeStore I/O directly. Under load, YAML reads/writes block the event loop and delay other requests.
 
 ## Findings
 
-- `api_skills` and related routes call `store.list_all()`/`load()` in async handlers. `src/mcp_server_browser_use/server.py:956-1004`
-- SkillStore uses blocking file I/O. `src/mcp_server_browser_use/skills/store.py:63-130`
+- `api_recipes` and related routes call `store.list_all()`/`load()` in async handlers. `src/mcp_server_browser_use/server.py:956-1004`
+- RecipeStore uses blocking file I/O. `src/mcp_server_browser_use/recipes/store.py:63-130`
 
 ## Proposed Solutions
 
@@ -53,11 +53,11 @@ Async HTTP endpoints call synchronous SkillStore I/O directly. Under load, YAML 
 
 **Affected files:**
 - `src/mcp_server_browser_use/server.py:956`
-- `src/mcp_server_browser_use/skills/store.py:63`
+- `src/mcp_server_browser_use/recipes/store.py:63`
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 
@@ -71,7 +71,7 @@ Async HTTP endpoints call synchronous SkillStore I/O directly. Under load, YAML 
 **By:** Codex
 
 **Actions:**
-- Reviewed REST handlers and SkillStore implementation
+- Reviewed REST handlers and RecipeStore implementation
 
 **Learnings:**
 - Store I/O is synchronous in async contexts

@@ -13,11 +13,11 @@ def anyio_backend():
 
 
 @pytest.fixture
-def temp_skills_dir(tmp_path: Path) -> Path:
-    """Create a temporary skills directory for test isolation."""
-    skills_dir = tmp_path / "browser-skills"
-    skills_dir.mkdir()
-    return skills_dir
+def temp_recipes_dir(tmp_path: Path) -> Path:
+    """Create a temporary recipes directory for test isolation."""
+    recipes_dir = tmp_path / "browser-recipes"
+    recipes_dir.mkdir()
+    return recipes_dir
 
 
 @pytest.fixture
@@ -27,12 +27,12 @@ def temp_db(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-async def mcp_client(monkeypatch, temp_skills_dir: Path, temp_db: Path) -> AsyncGenerator[Client, None]:
+async def mcp_client(monkeypatch, temp_recipes_dir: Path, temp_db: Path) -> AsyncGenerator[Client, None]:
     """Create an in-memory FastMCP client with isolated storage.
 
     This fixture:
     - Sets up test environment variables
-    - Uses temporary directories for skills and task DB
+    - Uses temporary directories for recipes and task DB
     - Yields a connected client for testing MCP tools
     """
     # Configure test environment
@@ -40,8 +40,8 @@ async def mcp_client(monkeypatch, temp_skills_dir: Path, temp_db: Path) -> Async
     monkeypatch.setenv("MCP_LLM_MODEL_NAME", "gpt-4")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("MCP_BROWSER_HEADLESS", "true")
-    monkeypatch.setenv("MCP_SKILLS_ENABLED", "true")  # Enable skills for testing
-    monkeypatch.setenv("MCP_SKILLS_DIRECTORY", str(temp_skills_dir))
+    monkeypatch.setenv("MCP_RECIPES_ENABLED", "true")  # Enable recipes for testing
+    monkeypatch.setenv("MCP_RECIPES_DIRECTORY", str(temp_recipes_dir))
 
     # Reload config module to pick up new env vars, then reload server
     import importlib

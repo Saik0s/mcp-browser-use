@@ -17,7 +17,7 @@ def client(monkeypatch):
     monkeypatch.setenv("MCP_LLM_MODEL_NAME", "gpt-4")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("MCP_BROWSER_HEADLESS", "true")
-    monkeypatch.setenv("MCP_SKILLS_ENABLED", "true")
+    monkeypatch.setenv("MCP_RECIPES_ENABLED", "true")
 
     # Reload config module to pick up new env vars
     import importlib
@@ -69,44 +69,44 @@ class TestDashboardLoads:
 
 
 @pytest.mark.integration
-class TestSkillsTabFunctionality:
-    """Test skills tab features in dashboard API."""
+class TestRecipesTabFunctionality:
+    """Test recipes tab features in dashboard API."""
 
-    def test_fetch_skills_returns_json(self, client):
-        """Skills endpoint should return valid JSON."""
-        response = client.get("/api/skills")
+    def test_fetch_recipes_returns_json(self, client):
+        """Recipes endpoint should return valid JSON."""
+        response = client.get("/api/recipes")
         assert response.status_code == 200
 
         data = response.json()
         assert isinstance(data, dict)
-        assert "skills" in data
-        assert isinstance(data["skills"], list)
+        assert "recipes" in data
+        assert isinstance(data["recipes"], list)
 
-    def test_skills_have_required_fields(self, client):
-        """Each skill should have required fields for display."""
-        response = client.get("/api/skills")
+    def test_recipes_have_required_fields(self, client):
+        """Each recipe should have required fields for display."""
+        response = client.get("/api/recipes")
         data = response.json()
 
-        for skill in data["skills"]:
+        for recipe in data["recipes"]:
             # Required for display in dashboard
-            assert "name" in skill
-            assert "description" in skill
-            assert "success_rate" in skill
-            assert "usage_count" in skill
+            assert "name" in recipe
+            assert "description" in recipe
+            assert "success_rate" in recipe
+            assert "usage_count" in recipe
             # Type checks
-            assert isinstance(skill["name"], str)
-            assert isinstance(skill["success_rate"], (int, float))
-            assert isinstance(skill["usage_count"], int)
+            assert isinstance(recipe["name"], str)
+            assert isinstance(recipe["success_rate"], (int, float))
+            assert isinstance(recipe["usage_count"], int)
 
-    def test_empty_skills_list_handled_gracefully(self, client):
-        """Should handle empty skills list gracefully."""
-        response = client.get("/api/skills")
+    def test_empty_recipes_list_handled_gracefully(self, client):
+        """Should handle empty recipes list gracefully."""
+        response = client.get("/api/recipes")
         assert response.status_code == 200
 
         data = response.json()
-        # Even with no skills, should return valid structure
-        assert "skills" in data
-        assert isinstance(data["skills"], list)
+        # Even with no recipes, should return valid structure
+        assert "recipes" in data
+        assert isinstance(data["recipes"], list)
 
 
 @pytest.mark.integration
@@ -206,9 +206,9 @@ class TestBrowserMockingStrategy:
         response = client.get("/api/health")
         assert response.status_code == 200
 
-    def test_skill_list_does_not_require_browser(self, client):
-        """Skill list should work without browser initialization."""
-        response = client.get("/api/skills")
+    def test_recipe_list_does_not_require_browser(self, client):
+        """Recipe list should work without browser initialization."""
+        response = client.get("/api/recipes")
         assert response.status_code == 200
 
     def test_api_returns_valid_json_without_llm(self, client):
@@ -217,7 +217,7 @@ class TestBrowserMockingStrategy:
         endpoints = [
             "/api/health",
             "/api/tasks",
-            "/api/skills",
+            "/api/recipes",
         ]
 
         for endpoint in endpoints:
@@ -239,9 +239,9 @@ class TestErrorHandling:
         response = client.get("/api/tasks/invalid_id_that_does_not_exist")
         assert response.status_code == 404
 
-    def test_invalid_skill_name_returns_404(self, client):
-        """Should return 404 for non-existent skills."""
-        response = client.get("/api/skills/nonexistent_skill_xyz")
+    def test_invalid_recipe_name_returns_404(self, client):
+        """Should return 404 for non-existent recipes."""
+        response = client.get("/api/recipes/nonexistent_recipe_xyz")
         assert response.status_code == 404
 
     def test_missing_required_fields_returns_error(self, client):
@@ -269,15 +269,15 @@ class TestApiResponseConsistency:
                 "cancelled",
             ]
 
-    def test_skill_response_includes_statistics(self, client):
-        """All skill responses should include statistics."""
-        response = client.get("/api/skills")
+    def test_recipe_response_includes_statistics(self, client):
+        """All recipe responses should include statistics."""
+        response = client.get("/api/recipes")
         data = response.json()
 
-        for skill in data["skills"]:
-            assert "success_rate" in skill
-            assert isinstance(skill["success_rate"], (int, float))
-            assert 0 <= skill["success_rate"] <= 100
+        for recipe in data["recipes"]:
+            assert "success_rate" in recipe
+            assert isinstance(recipe["success_rate"], (int, float))
+            assert 0 <= recipe["success_rate"] <= 100
 
     def test_async_endpoints_return_task_id(self, client):
         """Async endpoints should return task_id for tracking."""
@@ -325,13 +325,13 @@ class TestEventStreamIntegration:
 
 
 @pytest.mark.integration
-class TestSkillExecutionIntegration:
-    """Test skill execution endpoints."""
+class TestRecipeExecutionIntegration:
+    """Test recipe execution endpoints."""
 
-    def test_skill_run_returns_task_tracking_info(self, client):
-        """Skill run should return task ID for status tracking."""
+    def test_recipe_run_returns_task_tracking_info(self, client):
+        """Recipe run should return task ID for status tracking."""
         payload = {"url": "https://example.com"}
-        response = client.post("/api/skills/example_skill/run", json=payload)
+        response = client.post("/api/recipes/example_recipe/run", json=payload)
 
         if response.status_code == 202:
             data = response.json()
@@ -339,8 +339,8 @@ class TestSkillExecutionIntegration:
             assert "status_url" in data
             assert "message" in data
 
-    def test_skill_run_accepts_parameters(self, client):
-        """Skill run should accept parameters."""
+    def test_recipe_run_accepts_parameters(self, client):
+        """Recipe run should accept parameters."""
         payload = {
             "url": "https://example.com",
             "params": {
@@ -348,7 +348,7 @@ class TestSkillExecutionIntegration:
                 "max_results": 10,
             },
         }
-        response = client.post("/api/skills/example_skill/run", json=payload)
+        response = client.post("/api/recipes/example_recipe/run", json=payload)
         # Should not reject parameters
         assert response.status_code in (202, 400, 404, 503)
 
@@ -356,7 +356,7 @@ class TestSkillExecutionIntegration:
         """Learn endpoint should return task ID for status tracking."""
         payload = {
             "task": "Learn to interact with GitHub API",
-            "skill_name": "github_interaction",
+            "recipe_name": "github_interaction",
         }
         response = client.post("/api/learn", json=payload)
 
@@ -364,7 +364,7 @@ class TestSkillExecutionIntegration:
             data = response.json()
             assert "task_id" in data
             assert "status_url" in data
-            assert data["skill_name"] == "github_interaction"
+            assert data["recipe_name"] == "github_interaction"
 
 
 @pytest.mark.integration
@@ -385,21 +385,21 @@ class TestConcurrentOperations:
         # Mix different read operations
         responses.append(client.get("/api/health"))
         responses.append(client.get("/api/tasks"))
-        responses.append(client.get("/api/skills"))
+        responses.append(client.get("/api/recipes"))
         responses.append(client.get("/dashboard"))
 
         # All should succeed
         for response in responses:
             assert response.status_code == 200
 
-    def test_multiple_skill_operations(self, client):
-        """Should handle multiple skill operations."""
-        response1 = client.get("/api/skills")
+    def test_multiple_recipe_operations(self, client):
+        """Should handle multiple recipe operations."""
+        response1 = client.get("/api/recipes")
         response2 = client.post(
-            "/api/skills/test/run",
+            "/api/recipes/test/run",
             json={"url": "https://example.com"},
         )
-        response3 = client.get("/api/skills")
+        response3 = client.get("/api/recipes")
 
         assert response1.status_code == 200
         # response2 may be 404 or 202, but not 500

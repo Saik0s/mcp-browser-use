@@ -4,7 +4,7 @@ category: security-issues
 date: 2025-12-21
 severity: critical
 components:
-  - skills/runner.py
+  - recipes/runner.py
   - observability/store.py
   - server.py
 commits:
@@ -24,7 +24,7 @@ Three critical security and reliability issues identified and fixed during code 
 
 ## Fix 1: SSRF via DNS Rebinding (TOCTOU)
 
-**Component:** `skills/runner.py:449-459`
+**Component:** `recipes/runner.py:449-459`
 **Severity:** Critical
 **Commit:** `f3eeb19`
 
@@ -143,9 +143,9 @@ finally:
 
 ## Cross-References
 
-- **Test Suite:** `tests/test_skills_security.py` - comprehensive SSRF protection tests
+- **Test Suite:** `tests/test_recipes_security.py` - comprehensive SSRF protection tests
 - **Guidelines:** `CLAUDE.md` Security Considerations section
-- **Architecture:** `docs/skills-design.md`
+- **Architecture:** `docs/recipes-design.md`
 
 ## Verification
 

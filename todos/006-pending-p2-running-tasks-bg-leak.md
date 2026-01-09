@@ -10,7 +10,7 @@ dependencies: []
 
 ## Problem Statement
 
-Background tasks created for `/api/skills/{name}/run` and `/api/learn` are stored under `_bg` keys and never removed. This grows unbounded over time.
+Background tasks created for `/api/recipes/{name}/run` and `/api/learn` are stored under `_bg` keys and never removed. This grows unbounded over time.
 
 ## Findings
 
@@ -56,7 +56,7 @@ Background tasks created for `/api/skills/{name}/run` and `/api/learn` are store
 
 ## Resources
 
-- `docs/skills-design.md`
+- `docs/recipes-design.md`
 
 ## Acceptance Criteria
 

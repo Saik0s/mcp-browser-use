@@ -6,6 +6,79 @@ MCP server that gives AI assistants the power to control a web browser.
 
 ---
 
+## Project Status
+
+```
+═══════════════════════════════════════════════════════════════════════════════
+COMPLETION                                                    [████████████████░░░░] 85%
+═══════════════════════════════════════════════════════════════════════════════
+
+PROBLEM
+  MCP stdio transport times out on browser automation tasks (30-120+ seconds),
+  causing connections to drop mid-task.
+
+SOLUTION
+  HTTP-based MCP server wrapping browser-use library with FastMCP framework,
+  running as a persistent daemon. Recipes system discovers APIs for 50x faster
+  task replay (~2s vs ~60s).
+
+TARGET USER
+  AI developers and Claude users who need AI assistants to control real
+  browsers for web interaction, data extraction, and research.
+
+ARCHITECTURE
+  ┌─────────────────────────────────────────────────────────┐
+  │  MCP CLIENTS (Claude Desktop, CLI, HTTP callers)        │
+  └─────────────────────────┬───────────────────────────────┘
+                            │ HTTP / SSE
+                            ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │  FastMCP SERVER (server.py)                             │
+  │  ├── MCP Tools (run_browser_agent, run_deep_research)   │
+  │  ├── Web UI + Dashboard (/dashboard)                    │
+  │  └── REST API + SSE streams                             │
+  └──────┬──────────┬──────────┬──────────┬─────────────────┘
+         │          │          │          │
+         ▼          ▼          ▼          ▼
+  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐
+  │ CONFIG   │ │ LLM      │ │ RECIPES  │ │ OBSERVABILITY    │
+  │ Pydantic │ │ Factory  │ │ CDP API  │ │ SQLite + SSE     │
+  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘
+                            │
+                            ▼
+                   ┌────────────────────┐
+                   │   browser-use      │
+                   │ (Agent + Playwright)│
+                   └────────────────────┘
+
+FEATURES                                            Done: 14 │ Partial: 6 │ Todo: 14
+  ✓ FastMCP server with HTTP transport
+  ✓ run_browser_agent + run_deep_research tools
+  ✓ Task observability (SQLite + SSE real-time updates)
+  ✓ Web dashboard + CLI management
+  ✓ 12 LLM providers supported
+  ✓ Security: SSRF protection, header redaction, SQL injection fixes
+  ◐ Recipes learning (CDP capture + LLM analysis)
+  ◐ Recipes direct execution (~2s fast path)
+  ◐ Recipes hint-based fallback (~60s)
+  ○ Auth token enforcement on HTTP endpoints (P1)
+  ○ Recipe validation and versioning
+  ○ System service installation (Phase 3)
+  ○ Recipe sharing/marketplace (Phase 3)
+
+CURRENT STATE
+  Done: Phase 1 Foundation + Phase 2 Recipes Alpha (core)
+  In Progress: Security hardening, recipe validation
+  Not Started: Phase 3 Production, Phase 4 Scale
+
+  ⚠️  16 open issues in todos/ (1 P1, 8 P2, 7 P3)
+
+TESTS: 275 tests across 11 files (unit/integration/e2e/dashboard)
+═══════════════════════════════════════════════════════════════════════════════
+```
+
+---
+
 ## Table of Contents
 
 - [What is this?](#what-is-this)
@@ -17,7 +90,7 @@ MCP server that gives AI assistants the power to control a web browser.
 - [MCP Tools](#mcp-tools)
 - [Deep Research](#deep-research)
 - [Observability](#observability)
-- [Skills System](#skills-system-super-alpha)
+- [Recipes System](#recipes-system-super-alpha)
 - [REST API Reference](#rest-api-reference)
 - [Architecture](#architecture)
 - [License](#license)
@@ -127,13 +200,13 @@ Access the full-featured dashboard at http://localhost:8383/dashboard when the d
 
 **Features:**
 - **Tasks Tab:** Complete task history with filtering, real-time status updates, and detailed execution logs
-- **Skills Tab:** Browse, inspect, and manage learned skills with usage statistics
+- **Recipes Tab:** Browse, inspect, and manage learned recipes with usage statistics
 - **History Tab:** Historical view of all completed tasks with filtering by status and time
 
 **Key Capabilities:**
-- Run existing skills directly from the dashboard with custom parameters
-- Start learning sessions to capture new skills
-- Delete outdated or invalid skills
+- Run existing recipes directly from the dashboard with custom parameters
+- Start learning sessions to capture new recipes
+- Delete outdated or invalid recipes
 - Monitor running tasks with live progress updates
 - View full task results and error details
 
@@ -181,9 +254,9 @@ mcp-server-browser-use config set -k agent.max_steps -v 30
 | `server.port` | `8383` | Server port |
 | `server.results_dir` | - | Directory to save results |
 | `server.auth_token` | - | Auth token for non-localhost connections |
-| `skills.enabled` | `false` | Enable skills system (beta - disabled by default) |
-| `skills.directory` | `~/.config/browser-skills` | Skills storage location |
-| `skills.validate_results` | `true` | Validate skill execution results |
+| `recipes.enabled` | `false` | Enable recipes system (beta - disabled by default) |
+| `recipes.directory` | `~/.config/browser-recipes` | Recipes storage location |
+| `recipes.validate_results` | `true` | Validate recipe execution results |
 
 ### Config Priority
 
@@ -256,15 +329,15 @@ mcp-server-browser-use task cancel <id> # Cancel a running task
 mcp-server-browser-use health          # Server health + stats
 ```
 
-### Skills Management
+### Recipes Management
 
 ```bash
-mcp-server-browser-use call skill_list
-mcp-server-browser-use call skill_get name="my-skill"
-mcp-server-browser-use call skill_delete name="my-skill"
+mcp-server-browser-use call recipe_list
+mcp-server-browser-use call recipe_get name="my-recipe"
+mcp-server-browser-use call recipe_delete name="my-recipe"
 ```
 
-**Tip:** Skills can also be managed through the web dashboard at http://localhost:8383/dashboard for a visual interface with one-click execution and learning sessions.
+**Tip:** Recipes can also be managed through the web dashboard at http://localhost:8383/dashboard for a visual interface with one-click execution and learning sessions.
 
 ---
 
@@ -276,9 +349,9 @@ These tools are exposed via MCP for AI clients:
 |------|-------------|------------------|
 | `run_browser_agent` | Execute browser automation tasks | 60-120s |
 | `run_deep_research` | Multi-search research with synthesis | 2-5 min |
-| `skill_list` | List learned skills | <1s |
-| `skill_get` | Get skill definition | <1s |
-| `skill_delete` | Delete a skill | <1s |
+| `recipe_list` | List learned recipes | <1s |
+| `recipe_get` | Get recipe definition | <1s |
+| `recipe_delete` | Delete a recipe | <1s |
 | `health_check` | Server status and running tasks | <1s |
 | `task_list` | Query task history | <1s |
 | `task_get` | Get full task details | <1s |
@@ -300,10 +373,10 @@ The agent launches a browser, navigates to apple.com, finds the product, and ret
 |-----------|------|-------------|
 | `task` | string | What to do (required) |
 | `max_steps` | int | Override default max steps |
-| `skill_name` | string | Use a learned skill |
-| `skill_params` | JSON | Parameters for the skill |
+| `recipe_name` | string | Use a learned recipe |
+| `recipe_params` | JSON | Parameters for the recipe |
 | `learn` | bool | Enable learning mode |
-| `save_skill_as` | string | Name for the learned skill |
+| `save_recipe_as` | string | Name for the learned recipe |
 
 ### run_deep_research
 
@@ -420,17 +493,17 @@ AI clients can query task status directly:
 
 ---
 
-## Skills System (Super Alpha)
+## Recipes System (Super Alpha)
 
 > **Warning:** This feature is experimental and under active development. Expect rough edges.
 
-**Skills are disabled by default.** Enable them first:
+**Recipes are disabled by default.** Enable them first:
 
 ```bash
-mcp-server-browser-use config set -k skills.enabled -v true
+mcp-server-browser-use config set -k recipes.enabled -v true
 ```
 
-Skills let you "teach" the agent a task once, then replay it **50x faster** by reusing discovered API endpoints instead of full browser automation.
+Recipes let you "teach" the agent a task once, then replay it **50x faster** by reusing discovered API endpoints instead of full browser automation.
 
 ### The Problem
 
@@ -438,20 +511,20 @@ Browser automation is slow (60-120 seconds per task). But most websites have API
 
 ### The Solution
 
-Skills capture the API calls made during a browser session and replay them directly via CDP (Chrome DevTools Protocol).
+Recipes capture the API calls made during a browser session and replay them directly via CDP (Chrome DevTools Protocol).
 
 ```
-Without Skills:  Browser navigation → 60-120 seconds
-With Skills:     Direct API call    → 1-3 seconds
+Without Recipes:  Browser navigation → 60-120 seconds
+With Recipes:     Direct API call    → 1-3 seconds
 ```
 
-### Learning a Skill
+### Learning a Recipe
 
 ```bash
 mcp-server-browser-use call run_browser_agent \
   task="Find React packages on npmjs.com" \
   learn=true \
-  save_skill_as="npm-search"
+  save_recipe_as="npm-search"
 ```
 
 What happens:
@@ -459,23 +532,23 @@ What happens:
 1. **Recording:** CDP captures all network traffic during execution
 2. **Analysis:** LLM identifies the "money request"—the API call that returns the data
 3. **Extraction:** URL patterns, headers, and response parsing rules are saved
-4. **Storage:** Skill saved as YAML to `~/.config/browser-skills/npm-search.yaml`
+4. **Storage:** Recipe saved as YAML to `~/.config/browser-recipes/npm-search.yaml`
 
-### Using a Skill
+### Using a Recipe
 
 ```bash
 mcp-server-browser-use call run_browser_agent \
-  skill_name="npm-search" \
-  skill_params='{"query": "vue"}'
+  recipe_name="npm-search" \
+  recipe_params='{"query": "vue"}'
 ```
 
 ### Two Execution Modes
 
-Every skill supports two execution paths:
+Every recipe supports two execution paths:
 
 #### 1. Direct Execution (Fast Path) ~2 seconds
 
-If the skill captured an API endpoint (`SkillRequest`):
+If the recipe captured an API endpoint (`RecipeRequest`):
 
 ```
 Initialize CDP session
@@ -503,9 +576,9 @@ Agent discovers and calls API
 Return data
 ```
 
-### Skill File Format
+### Recipe File Format
 
-Skills are stored as YAML in `~/.config/browser-skills/`:
+Recipes are stored as YAML in `~/.config/browser-recipes/`:
 
 ```yaml
 name: npm-search
@@ -543,7 +616,7 @@ last_used: "2024-01-15T10:30:00Z"
 
 ### Parameters
 
-Skills support parameterized URLs and request bodies:
+Recipes support parameterized URLs and request bodies:
 
 ```yaml
 request:
@@ -551,11 +624,11 @@ request:
   body_template: '{"filters": {"category": "{category}"}}'
 ```
 
-Parameters are substituted at execution time from `skill_params`.
+Parameters are substituted at execution time from `recipe_params`.
 
 ### Auth Recovery
 
-If an API returns 401/403, skills can trigger auth recovery:
+If an API returns 401/403, recipes can trigger auth recovery:
 
 ```yaml
 auth_recovery:
@@ -568,9 +641,9 @@ The system will navigate to the recovery page (letting you log in) and retry.
 
 ### Limitations
 
-- **API Discovery:** Only works if the site has an API. Sites that render everything server-side won't yield useful skills.
-- **Auth State:** Skills rely on browser cookies. If you're logged out, they may fail.
-- **API Changes:** If a site changes their API, the skill breaks. Falls back to hint-based execution.
+- **API Discovery:** Only works if the site has an API. Sites that render everything server-side won't yield useful recipes.
+- **Auth State:** Recipes rely on browser cookies. If you're logged out, they may fail.
+- **API Changes:** If a site changes their API, the recipe breaks. Falls back to hint-based execution.
 - **Complex Flows:** Multi-step workflows (login → navigate → search) may not capture cleanly.
 
 ---
@@ -641,20 +714,20 @@ const events = new EventSource('/api/tasks/abc123/logs');
 events.onmessage = (e) => console.log(JSON.parse(e.data));
 ```
 
-### Skills
+### Recipes
 
-**GET /api/skills**
+**GET /api/recipes**
 
-List all available skills.
+List all available recipes.
 
 ```bash
-curl http://localhost:8383/api/skills
+curl http://localhost:8383/api/recipes
 ```
 
 Response:
 ```json
 {
-  "skills": [
+  "recipes": [
     {
       "name": "npm-search",
       "description": "Search for packages on npmjs.com",
@@ -664,32 +737,32 @@ Response:
     }
   ],
   "count": 1,
-  "skills_directory": "/Users/you/.config/browser-skills"
+  "recipes_directory": "/Users/you/.config/browser-recipes"
 }
 ```
 
-**GET /api/skills/{name}**
+**GET /api/recipes/{name}**
 
-Get full skill definition as JSON.
+Get full recipe definition as JSON.
 
 ```bash
-curl http://localhost:8383/api/skills/npm-search
+curl http://localhost:8383/api/recipes/npm-search
 ```
 
-**DELETE /api/skills/{name}**
+**DELETE /api/recipes/{name}**
 
-Delete a skill.
+Delete a recipe.
 
 ```bash
-curl -X DELETE http://localhost:8383/api/skills/npm-search
+curl -X DELETE http://localhost:8383/api/recipes/npm-search
 ```
 
-**POST /api/skills/{name}/run**
+**POST /api/recipes/{name}/run**
 
-Execute a skill with parameters (starts background task).
+Execute a recipe with parameters (starts background task).
 
 ```bash
-curl -X POST http://localhost:8383/api/skills/npm-search/run \
+curl -X POST http://localhost:8383/api/recipes/npm-search/run \
   -H "Content-Type: application/json" \
   -d '{"params": {"query": "react"}}'
 ```
@@ -698,22 +771,22 @@ Response:
 ```json
 {
   "task_id": "abc123...",
-  "skill_name": "npm-search",
-  "message": "Skill execution started",
+  "recipe_name": "npm-search",
+  "message": "Recipe execution started",
   "status_url": "/api/tasks/abc123..."
 }
 ```
 
 **POST /api/learn**
 
-Start a learning session to capture a new skill (starts background task).
+Start a learning session to capture a new recipe (starts background task).
 
 ```bash
 curl -X POST http://localhost:8383/api/learn \
   -H "Content-Type: application/json" \
   -d '{
     "task": "Search for TypeScript packages on npmjs.com",
-    "skill_name": "npm-search"
+    "recipe_name": "npm-search"
   }'
 ```
 
@@ -722,7 +795,7 @@ Response:
 {
   "task_id": "def456...",
   "learning_task": "Search for TypeScript packages on npmjs.com",
-  "skill_name": "npm-search",
+  "recipe_name": "npm-search",
   "message": "Learning session started",
   "status_url": "/api/tasks/def456..."
 }
@@ -776,14 +849,14 @@ Event format:
 │                         FastMCP SERVER                                   │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
 │  │                      MCP TOOLS                                    │   │
-│  │  • run_browser_agent    • skill_list/get/delete                  │   │
+│  │  • run_browser_agent    • recipe_list/get/delete                 │   │
 │  │  • run_deep_research    • health_check/task_list/task_get        │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 └────────┬──────────────┬─────────────────┬────────────────┬──────────────┘
          │              │                 │                │
          ▼              ▼                 ▼                ▼
 ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐
-│   CONFIG    │  │  PROVIDERS  │  │   SKILLS    │  │    OBSERVABILITY    │
+│   CONFIG    │  │  PROVIDERS  │  │   RECIPES   │  │    OBSERVABILITY    │
 │  Pydantic   │  │ 12 LLMs     │  │  Learn+Run  │  │   Task Tracking     │
 └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘
                                          │
@@ -808,11 +881,11 @@ src/mcp_server_browser_use/
 │   ├── store.py         # SQLite persistence
 │   └── logging.py       # Structured logging
 │
-├── skills/              # Machine-learned browser skills
-│   ├── models.py        # Skill, SkillRequest, AuthRecovery
+├── recipes/             # Machine-learned browser recipes
+│   ├── models.py        # Recipe, RecipeRequest, AuthRecovery
 │   ├── store.py         # YAML persistence
 │   ├── recorder.py      # CDP network capture
-│   ├── analyzer.py      # LLM skill extraction
+│   ├── analyzer.py      # LLM recipe extraction
 │   ├── runner.py        # Direct fetch() execution
 │   └── executor.py      # Hint injection
 │
@@ -827,7 +900,7 @@ src/mcp_server_browser_use/
 |------|-------|
 | Config | `~/.config/mcp-server-browser-use/config.json` |
 | Tasks DB | `~/.config/mcp-server-browser-use/tasks.db` |
-| Skills | `~/.config/browser-skills/*.yaml` |
+| Recipes | `~/.config/browser-recipes/*.yaml` |
 | Server Log | `~/.local/state/mcp-server-browser-use/server.log` |
 | Server PID | `~/.local/state/mcp-server-browser-use/server.json` |
 
@@ -869,7 +942,7 @@ Make browser automation accessible to AI agents through a simple, reliable MCP i
 
 1. **Reliability over Speed** - HTTP transport for long-running tasks; never drop connections mid-automation
 2. **Simplicity over Features** - Minimal configuration; sensible defaults; progressive disclosure of complexity
-3. **Safety First** - Skills disabled by default; SSRF protection; auth header redaction; localhost-only CDP
+3. **Safety First** - Recipes disabled by default; SSRF protection; auth header redaction; localhost-only CDP
 4. **Observable by Default** - All tasks tracked in SQLite; real-time progress via SSE; CLI visibility
 
 ### Non-Goals
@@ -898,8 +971,8 @@ Make browser automation accessible to AI agents through a simple, reliable MCP i
 |----|---------|--------------|------------|----------|
 | US-6 | Ops engineer | Install as a system service | The server auto-starts on boot and restarts on crash | P1 |
 | US-7 | Claude user | See real-time progress | I know what the agent is doing during long tasks | P1 |
-| US-8 | Skill user | Validate skills before using | I know they'll work before relying on them | P2 |
-| US-9 | Team lead | Share skills across team | We don't re-learn the same tasks | P3 |
+| US-8 | Recipe user | Validate recipes before using | I know they'll work before relying on them | P2 |
+| US-9 | Team lead | Share recipes across team | We don't re-learn the same tasks | P3 |
 
 ---
 
@@ -915,21 +988,21 @@ Make browser automation accessible to AI agents through a simple, reliable MCP i
 - [x] Web UI shows real-time task list and details
 - [x] CLI provides full server management (start/stop/logs/status)
 
-### Skills System (Alpha)
+### Recipes System (Alpha)
 
 - [x] Learning mode captures network traffic via CDP
 - [x] LLM analyzer identifies "money request" API endpoints
-- [x] Skills saved as YAML with parameterized URLs
+- [x] Recipes saved as YAML with parameterized URLs
 - [x] Direct execution via CDP fetch() (~2s vs ~60s)
 - [x] Hint-based fallback when direct execution fails
-- [ ] Skill validation before first use
-- [ ] Skill versioning and migration
+- [ ] Recipe validation before first use
+- [ ] Recipe versioning and migration
 - [ ] Auth recovery when sessions expire
 
 ### Security
 
 - [x] SSRF protection blocks private IPs, localhost, IPv6 link-local
-- [x] Sensitive headers (Authorization, Cookie) redacted before skill storage
+- [x] Sensitive headers (Authorization, Cookie) redacted before recipe storage
 - [x] CDP URL restricted to localhost only
 - [x] SQL injection prevented via parameterized queries + column whitelist
 - [x] DNS rebinding protected via re-validation before fetch
@@ -972,11 +1045,11 @@ Make browser automation accessible to AI agents through a simple, reliable MCP i
 - ⚠️ Different dependency injection patterns (CurrentContext vs Context)
 - ⚠️ Breaking API for old clients
 
-### ADR-003: Skills as API Discovery (not DOM Scraping)
+### ADR-003: Recipes as API Discovery (not DOM Scraping)
 
 **Context:** Browser automation is slow (~60s). Most sites have APIs behind their UI.
 
-**Decision:** Skills capture discovered API endpoints, not DOM selectors. Execute via direct fetch() calls.
+**Decision:** Recipes capture discovered API endpoints, not DOM selectors. Execute via direct fetch() calls.
 
 **Consequences:**
 - ✅ 50x faster execution (2s vs 60s)
@@ -984,13 +1057,13 @@ Make browser automation accessible to AI agents through a simple, reliable MCP i
 - ✅ Structured JSON responses
 - ⚠️ Only works for sites with APIs
 - ⚠️ Auth state required (browser cookies)
-- ⚠️ API changes break skills (fallback to hints)
+- ⚠️ API changes break recipes (fallback to hints)
 
 ### ADR-004: Disabled by Default for Alpha Features
 
-**Context:** Skills system is experimental. Security and correctness issues exist.
+**Context:** Recipes system is experimental. Security and correctness issues exist.
 
-**Decision:** Skills disabled by default. Enable via `skills.enabled=true` in config.
+**Decision:** Recipes disabled by default. Enable via `recipes.enabled=true` in config.
 
 **Consequences:**
 - ✅ Safe default for new users
@@ -1017,9 +1090,9 @@ Make browser automation accessible to AI agents through a simple, reliable MCP i
 
 | Issue | Impact | Workaround |
 |-------|--------|------------|
-| Skills only work with API-backed sites | Can't skill server-rendered pages | Use regular browser automation |
-| Auth sessions expire | Skills fail after logout | Re-authenticate in browser |
-| API changes break skills | Direct execution fails | Fallback to hint-based execution |
+| Recipes only work with API-backed sites | Can't recipe server-rendered pages | Use regular browser automation |
+| Auth sessions expire | Recipes fail after logout | Re-authenticate in browser |
+| API changes break recipes | Direct execution fails | Fallback to hint-based execution |
 | Single browser instance | Can't parallelize tasks | Run multiple server instances |
 | No Windows native support | Service install fails | Use WSL |
 
@@ -1034,7 +1107,7 @@ Make browser automation accessible to AI agents through a simple, reliable MCP i
 ### Security Considerations
 
 1. **CDP URLs** - Only localhost allowed. Never expose CDP port to network.
-2. **Skills Storage** - Sensitive headers redacted. Files stored in `~/.config/browser-skills/`.
+2. **Recipes Storage** - Sensitive headers redacted. Files stored in `~/.config/browser-recipes/`.
 3. **Private IPs** - SSRF protection blocks 127.0.0.1, 192.168.x.x, 10.x.x.x, fc00::/7, fe80::/10.
 4. **API Keys** - Prefer environment variables over config file.
 
@@ -1051,32 +1124,32 @@ Make browser automation accessible to AI agents through a simple, reliable MCP i
 - [x] Web dashboard
 - [x] CLI management
 
-### Phase 2: Skills System 🔬 Alpha
+### Phase 2: Recipes System 🔬 Alpha
 
-- [x] CDP network capture via SkillRecorder
-- [x] LLM skill extraction via SkillAnalyzer
-- [x] YAML persistence via SkillStore
-- [x] Direct execution via SkillRunner
-- [x] Hint-based fallback via SkillExecutor
+- [x] CDP network capture via RecipeRecorder
+- [x] LLM recipe extraction via RecipeAnalyzer
+- [x] YAML persistence via RecipeStore
+- [x] Direct execution via RecipeRunner
+- [x] Hint-based fallback via RecipeExecutor
 - [ ] Security hardening (SSRF, header redaction) - partial
-- [ ] Skill validation and status tracking
+- [ ] Recipe validation and status tracking
 - [ ] JMESPath for response extraction
 
 ### Phase 3: Production Readiness (Planned)
 
 - [ ] Background service installation (systemd/launchd)
 - [ ] Client-visible status updates via Context
-- [ ] Skill versioning and migration
+- [ ] Recipe versioning and migration
 - [ ] Auth recovery workflow
-- [ ] Skill sharing/marketplace
+- [ ] Recipe sharing/marketplace
 
 ### Phase 4: Scale (Future)
 
 - [ ] Multi-browser instance support
 - [ ] Distributed task queue
 - [ ] Metrics export (Prometheus)
-- [ ] Skill confidence scoring
-- [ ] Multi-step skill chains
+- [ ] Recipe confidence scoring
+- [ ] Multi-step recipe chains
 
 ---
 
@@ -1136,7 +1209,7 @@ async def my_tool(
 | **FastMCP** | jlowin's Python MCP framework with native background tasks |
 | **CDP** | Chrome DevTools Protocol - low-level browser control |
 | **Money Request** | The API call that returns the data the user asked for |
-| **Skill** | Machine-generated recipe for replaying a browser task via API |
+| **Recipe** | Machine-generated template for replaying a browser task via API |
 | **Hint-based Execution** | Fallback mode using navigation hints instead of direct API |
 | **SSRF** | Server-Side Request Forgery - security vulnerability |
 | **TOCTOU** | Time-of-Check to Time-of-Use - race condition vulnerability |
