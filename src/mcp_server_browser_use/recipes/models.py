@@ -85,8 +85,24 @@ class SessionRecording:
     end_time: datetime | None = None
 
     def get_api_calls(self) -> list[tuple[NetworkRequest, NetworkResponse]]:
-        """Get paired request/response for XHR/Fetch calls only."""
-        api_requests = {r.request_id: r for r in self.requests if r.resource_type in ("XHR", "Fetch", "xhr", "fetch")}
+        """Get paired request/response for API calls (XHR/Fetch + JSON documents)."""
+        # JSON content types that indicate API responses
+        json_types = ("application/json", "text/json", "application/vnd.api+json")
+
+        # Build response lookup by request_id
+        response_by_id = {r.request_id: r for r in self.responses}
+
+        # Filter requests to API calls
+        api_requests = {}
+        for req in self.requests:
+            resource_type = req.resource_type.lower()
+            if resource_type in ("xhr", "fetch"):
+                api_requests[req.request_id] = req
+            elif resource_type == "document":
+                # Include document loads that return JSON
+                resp = response_by_id.get(req.request_id)
+                if resp and any(ct in resp.mime_type.lower() for ct in json_types):
+                    api_requests[req.request_id] = req
 
         pairs = []
         for resp in self.responses:

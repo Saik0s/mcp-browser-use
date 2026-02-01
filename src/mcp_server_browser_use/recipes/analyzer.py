@@ -148,9 +148,9 @@ class RecipeAnalyzer:
             logger.info(f"Built RecipeRequest for direct execution: {recipe_request.url}")
 
         # NEW: Build AuthRecovery if provided
-        auth_data = analysis.get("auth_recovery", {})
+        auth_data = analysis.get("auth_recovery") or {}
         auth_recovery = None
-        if auth_data.get("recovery_page"):
+        if isinstance(auth_data, dict) and auth_data.get("recovery_page"):
             auth_recovery = AuthRecovery(
                 trigger_on_status=auth_data.get("trigger_on_status", [401, 403]),
                 trigger_on_body=auth_data.get("trigger_on_body"),
@@ -159,16 +159,18 @@ class RecipeAnalyzer:
             )
 
         # Build parameters from top-level or nested in request
-        parameters_data = analysis.get("parameters", [])
-        parameters = [
-            RecipeParameter(
-                name=p.get("name", ""),
-                source=p.get("source", "query"),
-                required=p.get("required", False),
-                default=p.get("default"),
-            )
-            for p in parameters_data
-        ]
+        parameters_data = analysis.get("parameters") or []
+        parameters = []
+        for p in parameters_data:
+            if p and isinstance(p, dict):
+                parameters.append(
+                    RecipeParameter(
+                        name=p.get("name", ""),
+                        source=p.get("source", "query"),
+                        required=p.get("required", False),
+                        default=p.get("default"),
+                    )
+                )
 
         # LEGACY: Build money_request for backward compatibility
         money_request_data = analysis.get("money_request", {})
@@ -183,8 +185,11 @@ class RecipeAnalyzer:
             )
 
         # LEGACY: Build navigation steps
-        navigation_data = analysis.get("navigation_steps", [])
-        navigation = [NavigationStep(url_pattern=n.get("url_pattern", ""), description=n.get("description", "")) for n in navigation_data]
+        navigation_data = analysis.get("navigation_steps") or []
+        navigation = []
+        for n in navigation_data:
+            if n and isinstance(n, dict):
+                navigation.append(NavigationStep(url_pattern=n.get("url_pattern", ""), description=n.get("description", "")))
 
         # Build hints (legacy)
         hints = RecipeHints(navigation=navigation, money_request=money_request)

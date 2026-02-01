@@ -217,7 +217,11 @@ class RecipeRecorder:
             self._cdp_to_response[request_id] = network_response
 
             # Schedule body capture for API calls (XHR/Fetch with JSON content)
-            if resource_type in ("xhr", "fetch"):
+            # Also capture document loads that return JSON (direct API navigation)
+            is_api_call = resource_type in ("xhr", "fetch")
+            is_json_document = resource_type == "document" and any(ct in mime_type.lower() for ct in JSON_CONTENT_TYPES)
+
+            if is_api_call or is_json_document:
                 if any(ct in mime_type.lower() for ct in JSON_CONTENT_TYPES):
                     task = asyncio.create_task(
                         self._capture_body_cdp(request_id, network_response, session_id),
@@ -359,15 +363,24 @@ class RecipeRecorder:
         )
 
     def get_api_calls_summary(self) -> list[dict]:
-        """Get a summary of API calls (XHR/Fetch) for quick inspection.
+        """Get a summary of API calls (XHR/Fetch and JSON documents) for quick inspection.
 
         Returns:
             List of dicts with API call summaries
         """
         api_calls = []
 
-        # Filter to XHR/Fetch requests
-        api_requests = {rid: req for rid, req in self._requests.items() if req.resource_type.lower() in ("xhr", "fetch")}
+        # Filter to XHR/Fetch requests and JSON document loads
+        api_requests = {}
+        for rid, req in self._requests.items():
+            resource_type = req.resource_type.lower()
+            if resource_type in ("xhr", "fetch"):
+                api_requests[rid] = req
+            elif resource_type == "document":
+                # Check if this document returned JSON (by looking at response)
+                resp = self._cdp_to_response.get(rid)
+                if resp and any(ct in resp.mime_type.lower() for ct in JSON_CONTENT_TYPES):
+                    api_requests[rid] = req
 
         # Match with responses
         for resp in self._responses:
@@ -392,5 +405,15 @@ class RecipeRecorder:
 
     @property
     def api_call_count(self) -> int:
-        """Number of XHR/Fetch API calls captured."""
-        return sum(1 for r in self._requests.values() if r.resource_type.lower() in ("xhr", "fetch"))
+        """Number of API calls captured (XHR/Fetch + JSON documents)."""
+        count = 0
+        for rid, req in self._requests.items():
+            resource_type = req.resource_type.lower()
+            if resource_type in ("xhr", "fetch"):
+                count += 1
+            elif resource_type == "document":
+                # Count JSON document loads as API calls
+                resp = self._cdp_to_response.get(rid)
+                if resp and any(ct in resp.mime_type.lower() for ct in JSON_CONTENT_TYPES):
+                    count += 1
+        return count
