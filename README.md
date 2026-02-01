@@ -68,7 +68,7 @@ For other MCP clients or standalone use:
 
 ```bash
 # Clone and install
-git clone https://github.com/anthropics/mcp-server-browser-use.git
+git clone https://github.com/Saik0s/mcp-browser-use.git
 cd mcp-server-browser-use
 uv sync
 
