@@ -8,8 +8,11 @@ Commands:
 - install: Install to Claude Desktop config
 - config: View or modify configuration
 - recipe: Manage browser recipes (list, get, delete)
+
+When run without subcommand: acts as stdio-to-HTTP proxy for backward compatibility.
 """
 
+import asyncio
 import json
 import os
 import signal
@@ -82,6 +85,78 @@ def _remove_server_info() -> None:
     """Remove server info file if exists."""
     if SERVER_INFO_FILE.exists():
         SERVER_INFO_FILE.unlink()
+
+
+def _ensure_server_running() -> tuple[str, int]:
+    """Ensure HTTP server is running, start if needed. Returns (host, port)."""
+    import subprocess
+    import time
+
+    info = _read_server_info()
+    if info and _is_process_running(info["pid"]):
+        return info["host"], info["port"]
+
+    # Server not running, start it
+    h = settings.server.host
+    p = settings.server.port
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "mcp_server_browser_use.cli",
+        "server",
+        "--host",
+        h,
+        "--port",
+        str(p),
+        "--foreground",
+    ]
+
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    log_fd = open(LOG_FILE, "a")
+
+    subprocess.Popen(
+        cmd,
+        stdout=log_fd,
+        stderr=log_fd,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        cwd=os.getcwd(),
+        env=os.environ.copy(),
+    )
+
+    # Wait for server to be ready
+    for _ in range(30):  # 3 seconds max
+        time.sleep(0.1)
+        info = _read_server_info()
+        if info and _is_process_running(info["pid"]):
+            return info["host"], info["port"]
+
+    raise RuntimeError("Failed to start HTTP server")
+
+
+def _run_stdio_mode() -> None:
+    """Run in stdio proxy mode for backward compatibility.
+
+    Uses FastMCP's create_proxy to bridge stdio to HTTP backend.
+    """
+    from fastmcp.server import create_proxy
+
+    try:
+        host, port = _ensure_server_running()
+        sys.stderr.write(f"[mcp-server-browser-use] Proxying stdio to http://{host}:{port}/mcp\n")
+        sys.stderr.flush()
+
+        # Create proxy that bridges stdio to HTTP backend
+        proxy = create_proxy(f"http://{host}:{port}/mcp", name="browser-use-proxy")
+        proxy.run()  # Defaults to stdio transport
+
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        sys.stderr.write(f"[mcp-server-browser-use] Error: {e}\n")
+        sys.stderr.flush()
+        sys.exit(1)
 
 
 @app.command()
@@ -276,7 +351,6 @@ async def _async_call_tool(tool_name: str, arguments: dict) -> tuple[list, bool]
 @app.command()
 def tools() -> None:
     """List available tools from the running server."""
-    import asyncio
 
     try:
         tools_list = asyncio.run(_async_list_tools())
@@ -313,7 +387,6 @@ def call(
         mcp-server-browser-use call run_browser_agent task="Go to google.com"
         mcp-server-browser-use call run_deep_research topic="AI trends 2025"
     """
-    import asyncio
 
     # Parse key=value arguments
     tool_args = {}
@@ -562,7 +635,6 @@ def tasks(
     tool_filter: str | None = typer.Option(None, "--tool", "-t", help="Filter by tool name"),
 ) -> None:
     """List recent tasks with status and progress."""
-    import asyncio
 
     from .observability import TaskStatus
     from .observability.store import TaskStore
@@ -624,7 +696,6 @@ def task_detail(
     task_id: str = typer.Argument(..., help="Task ID (full or prefix)"),
 ) -> None:
     """Show detailed information about a specific task."""
-    import asyncio
 
     from .observability.store import TaskStore
 
@@ -698,7 +769,6 @@ def task_detail(
 @app.command()
 def health() -> None:
     """Show server health and running task status."""
-    import asyncio
 
     import psutil
 
@@ -760,14 +830,13 @@ def health() -> None:
 def main(ctx: typer.Context) -> None:
     """Browser Use MCP Server & CLI.
 
-    Run 'server' subcommand to start the HTTP MCP server.
+    When run without subcommand, acts as stdio-to-HTTP proxy for backward compatibility.
+    Run 'server' subcommand to start the HTTP MCP server directly.
     """
     if ctx.invoked_subcommand is None:
-        # stdio is deprecated - show migration guide
-        from .server import STDIO_DEPRECATION_MESSAGE
-
-        console.print(STDIO_DEPRECATION_MESSAGE)
-        raise typer.Exit(1)
+        # Run stdio proxy mode for backward compatibility
+        # This allows old configs with just "mcp-server-browser-use" to work
+        _run_stdio_mode()
 
 
 if __name__ == "__main__":
