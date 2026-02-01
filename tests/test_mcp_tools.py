@@ -266,3 +266,46 @@ class TestRunDeepResearch:
             # Should use settings.research.max_searches (default 5)
             call_kwargs = machine_class.call_args[1]
             assert call_kwargs["max_searches"] >= 1  # At least 1 search
+
+
+class TestMCPPrompts:
+    """Test MCP prompts for recipes."""
+
+    @pytest.mark.anyio
+    async def test_list_prompts_recipes_enabled(self, client: Client):
+        """Should list recipe prompts when recipes are enabled."""
+        prompts = await client.list_prompts()
+        prompt_names = [p.name for p in prompts]
+
+        assert "recipe_overview" in prompt_names
+        assert "use_recipe" in prompt_names
+
+    @pytest.mark.anyio
+    async def test_list_prompts_recipes_disabled(self, client_recipes_disabled: Client):
+        """Should not list recipe prompts when recipes are disabled."""
+        prompts = await client_recipes_disabled.list_prompts()
+        prompt_names = [p.name for p in prompts]
+
+        assert "recipe_overview" not in prompt_names
+        assert "use_recipe" not in prompt_names
+
+    @pytest.mark.anyio
+    async def test_recipe_overview_empty(self, client: Client):
+        """recipe_overview prompt should work with no recipes."""
+        result = await client.get_prompt("recipe_overview")
+
+        # Should return a message about no recipes
+        assert result.messages is not None
+        assert len(result.messages) > 0
+        content = result.messages[0].content
+        assert "No browser recipes" in str(content) or "Available" in str(content)
+
+    @pytest.mark.anyio
+    async def test_use_recipe_not_found(self, client: Client):
+        """use_recipe prompt should handle non-existent recipe."""
+        result = await client.get_prompt("use_recipe", arguments={"recipe_name": "nonexistent"})
+
+        assert result.messages is not None
+        assert len(result.messages) > 0
+        content = result.messages[0].content
+        assert "not found" in str(content).lower()

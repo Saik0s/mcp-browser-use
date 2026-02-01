@@ -729,6 +729,110 @@ def serve() -> FastMCP:
             finally:
                 await browser_session.stop()
 
+        # --- Recipe Prompts ---
+        # MCP prompts provide context for LLMs to understand and use recipes
+
+        @server.prompt()
+        def recipe_overview() -> str:
+            """Get an overview of all available browser automation recipes.
+
+            Use this prompt at the start of a conversation to understand what
+            pre-learned API shortcuts are available for fast execution.
+            """
+            assert recipe_store is not None
+            recipes = recipe_store.list_all()
+
+            if not recipes:
+                return """No browser recipes are currently available.
+
+To learn new recipes, use the run_browser_agent tool with:
+- learn=True
+- save_recipe_as="recipe-name"
+
+The agent will discover API endpoints during execution and save them for fast replay."""
+
+            lines = ["# Available Browser Recipes\n"]
+            lines.append("These pre-learned API shortcuts execute in ~2 seconds vs ~60 seconds for full browser automation.\n")
+
+            for recipe in recipes:
+                status_emoji = "✓" if recipe.status == "verified" else "◌"
+                lines.append(f"## {status_emoji} {recipe.name}")
+                lines.append(f"_{recipe.description}_\n")
+
+                if recipe.parameters:
+                    lines.append("**Parameters:**")
+                    for param in recipe.parameters:
+                        req = "required" if param.required else f"optional, default={param.default}"
+                        lines.append(f"- `{param.name}` ({req}): {param.description}")
+                    lines.append("")
+
+                if recipe.success_count + recipe.failure_count > 0:
+                    lines.append(f"Success rate: {recipe.success_rate * 100:.0f}% ({recipe.success_count + recipe.failure_count} uses)\n")
+
+            lines.append("---")
+            lines.append("To use a recipe, call the `recipe_run_direct` tool with the recipe name and parameters.")
+
+            return "\n".join(lines)
+
+        @server.prompt()
+        def use_recipe(recipe_name: str) -> str:
+            """Get detailed instructions for using a specific recipe.
+
+            Args:
+                recipe_name: Name of the recipe to get instructions for
+            """
+            assert recipe_store is not None
+            recipe = recipe_store.load(recipe_name)
+
+            if not recipe:
+                available = [r.name for r in recipe_store.list_all()]
+                return f"""Recipe '{recipe_name}' not found.
+
+Available recipes: {", ".join(available) if available else "None"}
+
+To learn new recipes, use run_browser_agent with learn=True."""
+
+            lines = [f"# Recipe: {recipe.name}\n"]
+            lines.append(f"{recipe.description}\n")
+
+            # Parameters section
+            lines.append("## Parameters\n")
+            if recipe.parameters:
+                for param in recipe.parameters:
+                    req_text = "**required**" if param.required else f"optional (default: `{param.default}`)"
+                    lines.append(f"- `{param.name}` - {req_text}")
+                    if param.description:
+                        lines.append(f"  {param.description}")
+            else:
+                lines.append("No parameters required.\n")
+
+            # Execution section
+            lines.append("\n## How to Execute\n")
+            if recipe.supports_direct_execution:
+                lines.append("This recipe supports **direct execution** (~2 seconds).\n")
+                lines.append("Call the `recipe_run_direct` tool:")
+                lines.append("```json")
+                lines.append("{")
+                lines.append(f'  "recipe_name": "{recipe.name}",')
+                if recipe.parameters:
+                    param_example = {p.name: f"<{p.name}>" for p in recipe.parameters if p.required}
+                    if param_example:
+                        import json
+
+                        lines.append(f'  "params": {json.dumps(param_example)}')
+                lines.append("}")
+                lines.append("```")
+            else:
+                lines.append("This recipe requires **browser automation** (slower).\n")
+                lines.append("Use `run_browser_agent` with the recipe hints for guidance.")
+
+            # Original task context
+            if recipe.original_task:
+                lines.append("\n## Original Task\n")
+                lines.append(f"This recipe was learned from: _{recipe.original_task}_")
+
+            return "\n".join(lines)
+
     # --- Observability Tools ---
 
     # Define tool functions
