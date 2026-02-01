@@ -159,6 +159,7 @@ class BrowserSettings(BaseSettings):
     proxy_bypass: str | None = Field(default=None, description="Comma-separated hosts to bypass proxy")
     cdp_url: str | None = Field(default=None, description="CDP URL for external browser (e.g., http://localhost:9222)")
     user_data_dir: str | None = Field(default=None, description="Path to Chrome user data directory for persistent profile")
+    chromium_sandbox: bool = Field(default=True)
 
     @model_validator(mode="after")
     def validate_cdp_url(self) -> "BrowserSettings":

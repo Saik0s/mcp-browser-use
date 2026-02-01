@@ -113,6 +113,7 @@ def serve() -> FastMCP:
             proxy=proxy,
             cdp_url=settings.browser.cdp_url,
             user_data_dir=settings.browser.user_data_dir,
+            chromium_sandbox=settings.browser.chromium_sandbox,
         )
         if settings.browser.cdp_url:
             logger.info(f"Using external browser via CDP: {settings.browser.cdp_url}")
