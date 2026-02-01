@@ -8,7 +8,6 @@ Tests the full recipe learning flow:
 Uses manifest format from plans/skills-library-150-services.md with example_params.
 """
 
-import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -106,22 +105,12 @@ class TestRecipeLearning:
         2. Verifies an API endpoint was discovered
         3. Checks the learned recipe can be serialized
         """
-        from mcp_server_browser_use.recipes.analyzer import RecipeAnalyzer
-        from mcp_server_browser_use.recipes.recorder import NetworkRecorder
-        from mcp_server_browser_use.recipes.store import RecipeStore
 
         # Skip if no browser available
         try:
-            from browser_use import Browser
+            import browser_use  # noqa: F401
         except ImportError:
             pytest.skip("browser-use not installed")
-
-        store = RecipeStore(str(temp_recipes_dir))
-        analyzer = RecipeAnalyzer()
-
-        # Build the learning task
-        query = service.example_params.get("query", "test")
-        task = f"Search for '{query}' on {service.base_url} and find the API endpoint that returns the search results"
 
         # For this test, we'll simulate the learning flow by:
         # 1. Recording what we expect the API call to look like
@@ -250,10 +239,7 @@ class TestURLEncodingConsistency:
         for params in test_cases:
             func_result = build_url(template, params)
             method_result = request.build_url(params)
-            assert func_result == method_result, (
-                f"Inconsistent encoding for {params}: "
-                f"function={func_result}, method={method_result}"
-            )
+            assert func_result == method_result, f"Inconsistent encoding for {params}: function={func_result}, method={method_result}"
 
     def test_special_characters_encoded(self):
         """Verify special characters are properly URL-encoded."""
@@ -327,14 +313,10 @@ class TestManifestFormat:
         """Verify all manifests have example_params for testing."""
         for service in TEST_SERVICES:
             assert service.example_params, f"{service.name} must have example_params"
-            assert isinstance(
-                service.example_params, dict
-            ), f"{service.name} example_params must be dict"
+            assert isinstance(service.example_params, dict), f"{service.name} example_params must be dict"
 
     def test_manifest_api_style_valid(self):
         """Verify api_style is one of the allowed values."""
         allowed_styles = {"rest-json", "graphql", "html", "rest-xml"}
         for service in TEST_SERVICES:
-            assert (
-                service.api_style in allowed_styles
-            ), f"{service.name} has invalid api_style: {service.api_style}"
+            assert service.api_style in allowed_styles, f"{service.name} has invalid api_style: {service.api_style}"

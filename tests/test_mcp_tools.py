@@ -92,12 +92,13 @@ class TestListTools:
         assert "recipe_list" in tool_names
         assert "recipe_get" in tool_names
         assert "recipe_delete" in tool_names
+        assert "recipe_run_direct" in tool_names
         # Observability tools
         assert "health_check" in tool_names
         assert "task_list" in tool_names
         assert "task_get" in tool_names
         assert "task_cancel" in tool_names
-        assert len(tool_names) == 9
+        assert len(tool_names) == 10
 
     @pytest.mark.anyio
     async def test_list_tools_recipes_disabled(self, client_recipes_disabled: Client):
@@ -117,6 +118,7 @@ class TestListTools:
         assert "recipe_list" not in tool_names
         assert "recipe_get" not in tool_names
         assert "recipe_delete" not in tool_names
+        assert "recipe_run_direct" not in tool_names
         assert len(tool_names) == 6
 
     @pytest.mark.anyio
