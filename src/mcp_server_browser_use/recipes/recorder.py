@@ -147,6 +147,22 @@ class RecipeRecorder:
         cdp_client.register.Network.responseReceived(self._on_response_received)
         cdp_client.register.Network.loadingFailed(self._on_loading_failed)
 
+        # Enable Network domain to receive events
+        # Enable on browser-wide level (no session_id) to capture ALL network traffic
+        try:
+            await cdp_client.send.Network.enable()
+            logger.debug("Network domain enabled browser-wide")
+        except Exception as e:
+            # If browser-wide fails, try with a session
+            logger.debug(f"Browser-wide Network.enable failed: {e}, trying session-scoped")
+            try:
+                if hasattr(browser_session, "get_or_create_cdp_session"):
+                    cdp_session = await browser_session.get_or_create_cdp_session(target_id=None, focus=False)
+                    await cdp_session.cdp_client.send.Network.enable(session_id=cdp_session.session_id)
+                    logger.debug(f"Network domain enabled for session: {cdp_session.session_id}")
+            except Exception as e2:
+                logger.warning(f"Failed to enable Network domain: {e2}")
+
         logger.info(f"RecipeRecorder attached via CDP for task: {self.task[:50]}...")
 
     def _on_request_will_be_sent(self, event: "RequestWillBeSentEvent", session_id: str | None) -> None:
@@ -154,6 +170,7 @@ class RecipeRecorder:
 
         This is a synchronous callback.
         """
+        logger.debug(f"[RECORDER] Network event received! session={session_id}")
         try:
             request_id = event.get("requestId", "")
             request_data = event.get("request", {})  # type: ignore[arg-type]

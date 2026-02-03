@@ -83,6 +83,83 @@ IMPORTANT:
 - The extract_path uses simple dot notation: "data.items" or "objects[*].name" for arrays
 - If authentication might expire, include auth_recovery with the login page URL
 
+USER-REQUESTED PARAMETERS (CRITICAL):
+The user's task description often specifies what parameters the recipe should accept.
+ALWAYS extract parameters mentioned in the task, even if the API URL doesn't show them yet.
+
+Common patterns in task descriptions:
+- "it takes X and Y" → X and Y are parameters
+- "with X parameter" → X is a parameter
+- "accepts X" → X is a parameter
+- "configurable X" → X is a parameter
+- "limit", "count", "per_page" → pagination parameter
+- "page", "page number", "offset" → pagination parameter
+- "username", "user" → user identifier parameter
+
+If the user mentions parameters but the discovered URL doesn't include them:
+1. Research the API to find the correct query parameter name
+2. Add the parameter to the URL template
+3. Map user terms to API terms (limit→per_page, count→per_page, page→page)
+
+URL PARAMETERIZATION RULES:
+When extracting parameters from URLs, follow these conventions:
+
+1. Search queries: Extract search terms as {query} or {search} parameters
+   - Look for q=, query=, search=, keyword= in query strings
+   - The actual search term becomes the parameter, not the field name
+
+2. Pagination: Extract count and page parameters
+   - Use {per_page} or {limit} for items-per-page (default usually 10-50)
+   - Use {page} for page number (default usually 1 or 0)
+   - Look for: per_page=, limit=, count=, page=, offset=
+   - IMPORTANT: If user mentions "limit" or "page", ensure URL includes these params!
+
+3. Date filters: Extract date-based filters
+   - Use {date}, {since}, {created_after}, or {updated_after} as appropriate
+   - Keep the date format from the original URL
+
+4. Sort/order: Keep sort and order parameters if relevant to the task
+   - Usually these should stay as literal values, not parameters
+   - Only parameterize if the user might want different sort orders
+
+5. Complex query syntax: For APIs with query language (like GitHub):
+   - Keep static filters (stars:>1000, language:python) as literals
+   - Only extract the variable part as a parameter
+
+EXAMPLE 1 - GitHub Search API:
+Original URL:
+  https://api.github.com/search/repositories?q=python+stars:>1000&sort=stars&per_page=50
+
+Parameterized URL:
+  https://api.github.com/search/repositories?q={query}+stars:>1000&sort=stars&per_page={count}
+
+Parameters:
+  [
+    {"name": "query", "source": "query", "required": true, "default": null},
+    {"name": "count", "source": "query", "required": false, "default": "50"}
+  ]
+
+Note: "stars:>1000" stays literal because it's a static filter, not user input.
+      "sort=stars" stays literal because sorting is part of the recipe behavior.
+
+EXAMPLE 2 - User-requested parameters (GitHub User Stars):
+Task: "get starred repos for a GitHub user, it takes limit and page number"
+Original URL discovered: https://api.github.com/users/octocat/starred
+
+The user explicitly requested "limit" and "page number" parameters!
+Parameterized URL:
+  https://api.github.com/users/{username}/starred?per_page={limit}&page={page}
+
+Parameters:
+  [
+    {"name": "username", "source": "url", "required": true, "default": null, "description": "GitHub username"},
+    {"name": "limit", "source": "query", "required": false, "default": "30", "description": "Number of repos per page"},
+    {"name": "page", "source": "query", "required": false, "default": "1", "description": "Page number"}
+  ]
+
+Note: Even though the discovered URL didn't have ?per_page=&page=, we ADD them because
+      the user explicitly said "it takes limit and page number". Map user terms to API terms.
+
 If no suitable API was found, return:
 {
     "success": false,
@@ -129,6 +206,12 @@ API CALLS RECORDED (XHR/Fetch only):
 
 Identify the "money request" - the API call that returned the data the user asked for.
 Consider which endpoint returned data most relevant to the task.
+
+CRITICAL - EXTRACT PARAMETERS FROM THE TASK:
+Read the ORIGINAL TASK carefully. The user often specifies what parameters the recipe should accept.
+Look for phrases like "it takes X", "with X parameter", "accepts X and Y", etc.
+These MUST become recipe parameters, even if the discovered URL doesn't include them yet.
+Research the API docs mentally to map user terms (limit, count, page) to API params (per_page, page).
 
 Return your analysis as JSON.
 """

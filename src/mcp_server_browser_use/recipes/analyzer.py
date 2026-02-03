@@ -6,6 +6,7 @@ the desired data) from recorded network traffic.
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -81,6 +82,12 @@ class RecipeAnalyzer:
                 logger.info(f"Recipe analysis failed: {reason}")
                 return None
 
+            # Validate LLM output before building recipe
+            is_valid, validation_error = self._validate_analysis_output(result)
+            if not is_valid:
+                logger.warning(f"LLM output validation failed: {validation_error}")
+                return None
+
             # Build recipe from analysis
             recipe = self._build_recipe(result, recording)
             return recipe
@@ -117,6 +124,69 @@ class RecipeAnalyzer:
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse analysis response: {e}")
             return None
+
+    def _validate_analysis_output(self, analysis: dict) -> tuple[bool, str]:
+        """Validate LLM analysis output before building recipe.
+
+        Args:
+            analysis: Parsed analysis response from LLM
+
+        Returns:
+            Tuple of (is_valid, error_message). If valid, error_message is empty.
+        """
+        # If analysis explicitly failed, that's valid (we return None in analyze())
+        if not analysis.get("success", True):
+            return True, ""
+
+        # Validate request section
+        request_data = analysis.get("request")
+        if not request_data or not isinstance(request_data, dict):
+            return False, "Missing or invalid 'request' section"
+
+        # Validate URL exists and has valid scheme
+        url = request_data.get("url")
+        if not url or not isinstance(url, str):
+            return False, "Missing or invalid 'url' in request"
+
+        url_lower = url.lower()
+        if not url_lower.startswith("http://") and not url_lower.startswith("https://"):
+            return False, f"URL must start with http:// or https://, got: {url[:50]}"
+
+        # Validate URL parameter placeholders are valid identifiers
+        # Matches {param_name} patterns
+        placeholder_pattern = re.compile(r"\{([^}]+)\}")
+        placeholders = placeholder_pattern.findall(url)
+        for placeholder in placeholders:
+            # Valid Python identifier: starts with letter/underscore, contains alphanumeric/underscore
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", placeholder):
+                return False, f"Invalid URL parameter placeholder: {{{placeholder}}}. Must be valid identifier."
+
+        # Validate HTTP method
+        method = request_data.get("method", "GET")
+        valid_methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+        if not isinstance(method, str) or method.upper() not in valid_methods:
+            return False, f"Invalid HTTP method: {method}. Must be one of {valid_methods}"
+
+        # Validate response_type
+        response_type = request_data.get("response_type", "json")
+        valid_response_types = {"json", "html", "text"}
+        if not isinstance(response_type, str) or response_type.lower() not in valid_response_types:
+            return False, f"Invalid response_type: {response_type}. Must be one of {valid_response_types}"
+
+        # Validate parameters list
+        parameters = analysis.get("parameters", [])
+        if parameters and isinstance(parameters, list):
+            for i, param in enumerate(parameters):
+                if not isinstance(param, dict):
+                    return False, f"Parameter at index {i} must be a dict"
+                param_name = param.get("name")
+                if not param_name or not isinstance(param_name, str) or not param_name.strip():
+                    return False, f"Parameter at index {i} has missing or empty 'name'"
+                # Validate param name is valid identifier
+                if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", param_name):
+                    return False, f"Parameter name '{param_name}' is not a valid identifier"
+
+        return True, ""
 
     def _build_recipe(self, analysis: dict, recording: SessionRecording) -> Recipe:
         """Build a Recipe object from analysis results.
