@@ -1247,14 +1247,82 @@ To learn new recipes, use run_browser_agent with learn=True."""
             await task_store.update_status(task_id, TaskStatus.RUNNING)
             task_logger.info("task_running")
 
+            execution_mode = "agent"  # Track how the recipe was executed
+
             try:
-                # Build agent with skill hints
+                # Load recipe and merge params
+                skill = recipe_store.load(recipe_name) if recipe_store else None
+                merged_params = skill.merge_params(params) if skill else params
+
+                # Try direct execution first if recipe supports it
+                if skill and skill.supports_direct_execution:
+                    logger.info(f"Attempting direct execution for recipe: {recipe_name}")
+                    task_logger.info("direct_execution_attempt", recipe=recipe_name)
+
+                    try:
+                        from browser_use.browser.session import BrowserSession
+
+                        browser_session = BrowserSession(browser_profile=profile)
+                        await browser_session.start()
+
+                        try:
+                            runner = RecipeRunner()
+                            run_result = await runner.run(skill, merged_params, browser_session)
+
+                            if run_result.success:
+                                # Direct execution succeeded!
+                                execution_mode = "direct"
+                                if recipe_store:
+                                    recipe_store.record_usage(recipe_name, success=True)
+                                logger.info(f"Recipe direct execution succeeded: {recipe_name}")
+                                task_logger.info("direct_execution_success", recipe=recipe_name)
+
+                                # Format result
+                                import json
+
+                                if isinstance(run_result.data, (dict, list)):
+                                    final = json.dumps(run_result.data, indent=2)
+                                else:
+                                    final = str(run_result.data)
+
+                                # Auto-save result if configured
+                                if settings.server.results_dir:
+                                    saved_path = save_execution_result(
+                                        final,
+                                        prefix=f"skill_{recipe_name}",
+                                        metadata={"skill": recipe_name, "params": params, "direct": True, "execution_mode": execution_mode},
+                                    )
+                                    task_logger.info("result_saved", path=str(saved_path))
+
+                                await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final)
+                                task_logger.info("task_completed", result_length=len(final), execution_mode=execution_mode)
+                                clear_task_context()
+                                return  # Early exit - direct execution succeeded
+
+                            elif run_result.auth_recovery_triggered:
+                                # Auth failed - fall back to agent for re-auth
+                                logger.info("Direct execution needs auth recovery, falling back to agent")
+                                task_logger.info("direct_execution_auth_fallback", recipe=recipe_name)
+                                # Continue to agent execution below
+
+                            else:
+                                # Direct execution failed - fall back to agent
+                                logger.warning(f"Direct execution failed: {run_result.error}")
+                                task_logger.info("direct_execution_failed", recipe=recipe_name, error=run_result.error)
+                                # Continue to agent execution below
+
+                        finally:
+                            await browser_session.stop()
+
+                    except Exception as e:
+                        logger.error(f"Direct execution error: {e}")
+                        task_logger.info("direct_execution_error", recipe=recipe_name, error=str(e))
+                        # Continue to agent execution below
+
+                # Agent execution (fallback or non-direct recipes)
                 augmented_task = task_desc
-                if recipe_store:
-                    skill = recipe_store.load(recipe_name)
-                    if skill and recipe_executor:
-                        merged_params = skill.merge_params(params)
-                        augmented_task = recipe_executor.inject_hints(task_desc, skill, merged_params)
+                if skill and recipe_executor:
+                    augmented_task = recipe_executor.inject_hints(task_desc, skill, merged_params)
 
                 agent = Agent(
                     task=augmented_task,
@@ -1275,7 +1343,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
                     recipe_store.record_usage(recipe_name, success=True)
 
                 await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final)
-                task_logger.info("task_completed", result_length=len(final))
+                task_logger.info("task_completed", result_length=len(final), execution_mode=execution_mode)
 
             except Exception as e:
                 if recipe_store:
