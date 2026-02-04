@@ -474,16 +474,42 @@ class RecipeRunner:
         # Wait for page to load (networkIdle or timeout)
         await asyncio.sleep(3.0)  # Allow JS to render
 
-        # Build JavaScript to extract data using CSS selectors
+        # Build JavaScript to extract data using CSS selectors with validation
         selectors = request.html_selectors or {}
         js_code = """
         (function() {
             const selectors = %s;
-            const result = {};
+            const result = {_meta: {tested: {}, total_matches: 0}};
+
             for (const [name, selector] of Object.entries(selectors)) {
-                const elements = document.querySelectorAll(selector);
-                result[name] = Array.from(elements).map(el => el.textContent.trim()).filter(t => t);
+                try {
+                    const elements = document.querySelectorAll(selector);
+                    const values = Array.from(elements).map(el => el.textContent.trim()).filter(t => t);
+                    result[name] = values;
+                    result._meta.tested[name] = {selector, count: elements.length, hasData: values.length > 0};
+                    result._meta.total_matches += values.length;
+                } catch (e) {
+                    result[name] = [];
+                    result._meta.tested[name] = {selector, error: e.message};
+                }
             }
+
+            // If all selectors failed, try to find common list patterns
+            if (result._meta.total_matches === 0) {
+                const fallbackSelectors = [
+                    'article a', 'li a', '.list-item a', '[role="listitem"] a',
+                    'h3 a', 'h4 a', '.card a', '.item a'
+                ];
+                for (const sel of fallbackSelectors) {
+                    const els = document.querySelectorAll(sel);
+                    if (els.length > 3) {
+                        result._meta.suggested_selector = sel;
+                        result._meta.suggested_count = els.length;
+                        break;
+                    }
+                }
+            }
+
             return JSON.stringify(result);
         })()
         """ % json.dumps(selectors)
@@ -505,7 +531,25 @@ class RecipeRunner:
             result_value = eval_result.get("result", {}).get("value", "{}")
             extracted = json.loads(result_value)
 
-            logger.debug(f"HTML extraction completed: {len(extracted)} fields")
+            # Check selector validation results
+            meta = extracted.pop("_meta", {})
+            total_matches = meta.get("total_matches", 0)
+
+            if total_matches == 0:
+                # Log warning about empty selectors
+                tested = meta.get("tested", {})
+                logger.warning(f"HTML selectors returned no data: {tested}")
+                if meta.get("suggested_selector"):
+                    logger.info(f"Suggested selector: {meta['suggested_selector']} ({meta['suggested_count']} matches)")
+                # Return with warning but still "success" - let caller decide
+                return RecipeRunResult(
+                    success=True,
+                    data=extracted,
+                    status_code=200,
+                    raw_response=f"Warning: selectors matched no elements. Suggested: {meta.get('suggested_selector', 'none')}",
+                )
+
+            logger.debug(f"HTML extraction completed: {len(extracted)} fields, {total_matches} total matches")
             return RecipeRunResult(
                 success=True,
                 data=extracted,
