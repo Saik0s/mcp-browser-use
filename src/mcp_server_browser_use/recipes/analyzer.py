@@ -1,7 +1,8 @@
 """Recipe analyzer for extracting recipes from session recordings.
 
-Uses an LLM to identify the "money request" (the API call that returns
-the desired data) from recorded network traffic.
+Analyzes recorded sessions to create replayable recipes:
+- API-based: Direct HTTP calls when XHR/Fetch captured
+- HTML-based: CSS selectors when data was scraped from page
 """
 
 import json
@@ -35,21 +36,24 @@ class RecipeAnalyzer:
         """
         self.llm = llm
 
-    async def analyze(self, recording: SessionRecording) -> Recipe | None:
+    async def analyze(
+        self,
+        recording: SessionRecording,
+        final_url: str | None = None,
+        page_html_snippet: str | None = None,
+    ) -> Recipe | None:
         """Analyze a recording to extract a recipe.
 
         Args:
             recording: Session recording with network events
+            final_url: The final page URL where data was found
+            page_html_snippet: Snippet of page HTML for CSS selector extraction
 
         Returns:
-            Extracted Recipe if successful, None if no API found
+            Extracted Recipe if successful, None if extraction failed
         """
-        # Get API calls summary
+        # Get API calls summary (may be empty for HTML-based recipes)
         api_calls = recording.get_api_calls()
-
-        if not api_calls:
-            logger.warning("No API calls found in recording")
-            return None
 
         # Format API calls for analysis
         api_calls_data = []
@@ -65,8 +69,18 @@ class RecipeAnalyzer:
             }
             api_calls_data.append(call_data)
 
-        # Build prompt
-        prompt = get_analysis_prompt(recording.task, recording.result, api_calls_data)
+        # Use final navigation URL if not provided
+        if not final_url and recording.navigation_urls:
+            final_url = recording.navigation_urls[-1]
+
+        # Build prompt with page info
+        prompt = get_analysis_prompt(
+            recording.task,
+            recording.result,
+            api_calls_data,
+            final_url=final_url,
+            page_html_snippet=page_html_snippet,
+        )
 
         # Call LLM
         try:

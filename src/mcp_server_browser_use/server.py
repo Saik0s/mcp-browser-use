@@ -439,9 +439,10 @@ def serve() -> FastMCP:
                         )
                         logger.warning("Using simplified recording - recorder was not attached")
 
-                    # Analyze with LLM
+                    # Analyze with LLM - pass final URL for HTML-based recipes
                     analyzer = RecipeAnalyzer(llm)
-                    extracted_skill = await analyzer.analyze(recording)
+                    final_page_url = last_url if last_url else (navigation_urls[-1] if navigation_urls else None)
+                    extracted_skill = await analyzer.analyze(recording, final_url=final_page_url)
 
                     if extracted_skill and recipe_store:
                         extracted_skill.name = save_recipe_as
@@ -1467,9 +1468,10 @@ To learn new recipes, use run_browser_agent with learn=True."""
 
                         recording = recorder.get_recording(result=final)
 
-                        # Analyze with LLM
+                        # Analyze with LLM - use last navigation URL for HTML-based recipes
                         analyzer = RecipeAnalyzer(llm)
-                        extracted_recipe = await analyzer.analyze(recording)
+                        final_page_url = recording.navigation_urls[-1] if recording.navigation_urls else None
+                        extracted_recipe = await analyzer.analyze(recording, final_url=final_page_url)
 
                         if extracted_recipe:
                             extracted_recipe.name = recipe_name

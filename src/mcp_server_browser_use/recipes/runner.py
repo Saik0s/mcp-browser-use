@@ -312,15 +312,20 @@ class RecipeRunner:
             logger.error(f"Failed to initialize CDP session: {e}")
             return RecipeRunResult(success=False, error=f"CDP session failed: {e}")
 
-        # Navigate to the domain first to establish cookie context
-        try:
-            await self._navigate_to_domain(browser_session, cdp_session, base_url)
-        except Exception as e:
-            logger.error(f"Failed to navigate to domain {base_url}: {e}")
-            return RecipeRunResult(success=False, error=f"Navigation failed: {e}")
+        # For HTML pages with selectors, navigate to full URL and extract from rendered DOM
+        # This handles JavaScript-rendered pages (like GitHub)
+        if request.response_type == "html" and request.html_selectors:
+            result = await self._execute_html_extraction(request, params, url, browser_session, cdp_session)
+        else:
+            # For JSON/text, navigate to domain for cookies, then fetch
+            try:
+                await self._navigate_to_domain(browser_session, cdp_session, base_url)
+            except Exception as e:
+                logger.error(f"Failed to navigate to domain {base_url}: {e}")
+                return RecipeRunResult(success=False, error=f"Navigation failed: {e}")
 
-        # Execute the fetch
-        result = await self._execute_fetch(request, params, browser_session, cdp_session)
+            # Execute the fetch
+            result = await self._execute_fetch(request, params, browser_session, cdp_session)
 
         # Check if auth recovery is needed
         if not result.success and auth_recovery and self._should_recover_auth(result, auth_recovery):
@@ -431,6 +436,85 @@ class RecipeRunner:
         except Exception as e:
             logger.debug(f"Could not get frame tree: {e}")
             return None
+
+    async def _execute_html_extraction(
+        self,
+        request: RecipeRequest,
+        params: dict[str, Any],
+        url: str,
+        browser_session: "BrowserSession",
+        cdp_session: "CDPSession",
+    ) -> RecipeRunResult:
+        """Navigate to page and extract content using CSS selectors.
+
+        For JavaScript-rendered pages, we navigate to the full URL, wait for
+        content to load, then extract data using CSS selectors in the browser.
+
+        Args:
+            request: Recipe request configuration
+            params: Parameters (unused, URL already built)
+            url: Full URL to navigate to
+            browser_session: Browser session
+            cdp_session: CDP session with Runtime domain enabled
+
+        Returns:
+            RecipeRunResult with extracted data
+        """
+        logger.debug(f"HTML extraction: navigating to {url}")
+
+        # Navigate to the full URL
+        nav_result = await browser_session.cdp_client.send.Page.navigate(
+            params={"url": url, "transitionType": "address_bar"},
+            session_id=cdp_session.session_id,
+        )
+
+        if nav_result.get("errorText"):
+            return RecipeRunResult(success=False, error=f"Navigation failed: {nav_result['errorText']}")
+
+        # Wait for page to load (networkIdle or timeout)
+        await asyncio.sleep(3.0)  # Allow JS to render
+
+        # Build JavaScript to extract data using CSS selectors
+        selectors = request.html_selectors or {}
+        js_code = """
+        (function() {
+            const selectors = %s;
+            const result = {};
+            for (const [name, selector] of Object.entries(selectors)) {
+                const elements = document.querySelectorAll(selector);
+                result[name] = Array.from(elements).map(el => el.textContent.trim()).filter(t => t);
+            }
+            return JSON.stringify(result);
+        })()
+        """ % json.dumps(selectors)
+
+        try:
+            eval_result = await browser_session.cdp_client.send.Runtime.evaluate(
+                params={
+                    "expression": js_code,
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                },
+                session_id=cdp_session.session_id,
+            )
+
+            if eval_result.get("exceptionDetails"):
+                error = eval_result["exceptionDetails"].get("text", "Unknown error")
+                return RecipeRunResult(success=False, error=f"Selector extraction failed: {error}")
+
+            result_value = eval_result.get("result", {}).get("value", "{}")
+            extracted = json.loads(result_value)
+
+            logger.debug(f"HTML extraction completed: {len(extracted)} fields")
+            return RecipeRunResult(
+                success=True,
+                data=extracted,
+                status_code=200,
+            )
+
+        except Exception as e:
+            logger.error(f"HTML extraction failed: {e}")
+            return RecipeRunResult(success=False, error=f"Extraction failed: {e}")
 
     async def _execute_fetch(
         self,
