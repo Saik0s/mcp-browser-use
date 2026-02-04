@@ -1,7 +1,12 @@
 """Prompts for recipe learning and execution.
 
-Learning Mode: Agent is instructed to discover and use APIs, not DOM scraping.
-Analysis Mode: LLM identifies the "money request" from recorded network traffic.
+Learning Mode: Agent completes the task normally. System records the workflow.
+Analysis Mode: LLM extracts a replayable recipe from the recorded session.
+
+Recipes can be:
+1. API-based: Direct HTTP calls (fastest, ~1-2s)
+2. HTML-based: Navigate to URL, parse HTML with CSS selectors (~2-5s)
+3. Workflow-based: Multi-step browser actions (fallback, ~30-60s)
 """
 
 # --- Learning Mode Prompt ---
@@ -9,189 +14,141 @@ Analysis Mode: LLM identifies the "money request" from recorded network traffic.
 
 LEARNING_MODE_SUFFIX = """
 
-IMPORTANT - API DISCOVERY MODE:
-Your goal is to complete this task BY DISCOVERING AND USING THE UNDERLYING API.
+LEARNING MODE - Complete the task normally.
 
-Instructions:
-1. Navigate to the relevant page(s) as needed
-2. OBSERVE the network requests being made (XHR/Fetch calls)
-3. IDENTIFY the API endpoint that returns the data you need
-4. The data you need will come from an API response, NOT from DOM scraping
-5. Report the API endpoint you found and the data structure
+The system is recording your actions to create a reusable recipe.
+Just complete the task as you normally would:
+1. Navigate to the relevant pages
+2. Click buttons, fill forms as needed
+3. Extract the data requested
+4. Report what you found
 
-What to look for:
-- GraphQL endpoints (often /graphql or /api/graphql)
-- REST API endpoints (often /api/v1/... or similar)
-- JSON responses that contain the requested data
+CRITICAL for recipe creation - TEST YOUR SELECTORS:
+- Use browser DevTools or document.querySelectorAll() to verify CSS selectors
+- Test that selectors actually match elements and return expected data
+- Common working selector patterns:
+  - Links: 'a[href*="/specific-path"]'
+  - List items: 'ul li', 'div.list-item'
+  - Data cells: 'td', 'span.value'
+  - React apps often use: '[data-testid="..."]', 'div[class*="component"]'
 
-What NOT to do:
-- Do NOT extract data by reading DOM elements
-- Do NOT rely on CSS selectors for data extraction
-- The page DOM is just for navigation, not data extraction
-
-Success criteria:
-- You found an API endpoint that returns the requested data
-- You can describe the endpoint (URL, method, parameters)
-- The response contains structured data (JSON)
-
-If you cannot find an API (data is rendered server-side with no API):
-- Report that no suitable API was found
-- This means the task cannot be learned as a recipe
+At the end, summarize:
+- Final URL: [the page/API URL where data was found]
+- CSS Selectors (TESTED): [exact selectors that work, verified with querySelectorAll]
+- Sample data: [first few items extracted with those selectors]
+- Parameters: [what values could be changed for different queries]
 """
 
 
 # --- Recipe Analysis Prompt ---
-# LLM analyzes recorded network traffic to extract a recipe
+# LLM analyzes recorded session to extract a recipe (API or HTML-based)
 
-ANALYSIS_SYSTEM_PROMPT = """You are a browser automation expert analyzing network traffic to extract reusable recipes.
+ANALYSIS_SYSTEM_PROMPT = """You are a browser automation expert analyzing a recorded session to extract a reusable recipe.
 
-Your task is to identify the "money request" - the single API call that returns the data the user asked for.
-This request will be executed DIRECTLY via browser fetch() for fast recipe replay.
+RECIPE TYPES (in order of preference):
+1. API-based: If an XHR/Fetch call returned the needed data as JSON
+2. HTML-based: If data was scraped from a page's HTML (use CSS selectors)
+3. Workflow hints: If neither works, provide navigation hints for the agent
 
-A good money request:
-- Returns JSON data that matches what the user asked for
-- Is a single endpoint (not multiple calls)
-- Has clear parameters that can be templated (use {param_name} placeholders)
-- Returns structured data (JSON preferred, HTML accepted)
+ANALYZE THE SESSION:
+Look at both the API calls AND the agent's result. The agent may have:
+- Found and used an API endpoint (check API CALLS section)
+- Scraped data from HTML (check AGENT RESULT for CSS selectors or DOM info)
+- Navigated to a specific URL with the data
 
-Output a JSON object with:
+OUTPUT FORMAT:
 {
     "success": true/false,
     "reason": "Why this succeeded or failed",
+    "recipe_type": "api" | "html" | "hints",
     "request": {
-        "url": "Full URL with {param} placeholders, e.g., https://npmjs.com/search?q={query}",
+        "url": "Full URL with {param} placeholders",
         "method": "GET or POST",
-        "headers": {"Content-Type": "application/json"},  // Only include essential headers
-        "body_template": "Request body with {param} placeholders (for POST)",
-        "response_type": "json or html or text",
-        "extract_path": "JSONPath to extract data, e.g., objects[*].package.name"
+        "headers": {},
+        "body_template": null,
+        "response_type": "json" | "html" | "text",
+        "extract_path": "JMESPath for JSON, e.g., items[*].name",
+        "html_selectors": {"field_name": "CSS selector", ...}  // For HTML type
     },
     "parameters": [
-        {"name": "query", "source": "url|body|query", "required": true, "default": null}
+        {"name": "param", "source": "url|query|body", "required": true, "default": null, "description": "..."}
     ],
     "auth_recovery": {
         "trigger_on_status": [401, 403],
-        "recovery_page": "URL to navigate if auth fails (e.g., login page)"
+        "recovery_page": "login URL"
     },
-    "recipe_name_suggestion": "suggested-recipe-name",
+    "recipe_name_suggestion": "suggested-name",
     "recipe_description": "What this recipe does"
 }
 
-IMPORTANT:
-- The "url" must be the FULL URL including domain (https://...)
-- Use {param_name} placeholders for values that change between invocations
-- The extract_path uses simple dot notation: "data.items" or "objects[*].name" for arrays
-- If authentication might expire, include auth_recovery with the login page URL
+FOR HTML-BASED RECIPES:
+- Set response_type to "html"
+- Provide html_selectors with CSS selectors for each data field
+- Example: {"repo_names": "article h3 a", "stars": "a[href*='/stargazers']"}
 
-USER-REQUESTED PARAMETERS (CRITICAL):
-The user's task description often specifies what parameters the recipe should accept.
-ALWAYS extract parameters mentioned in the task, even if the API URL doesn't show them yet.
+FOR API-BASED RECIPES:
+- Set response_type to "json"
+- Provide extract_path with JMESPath expression
+- Example: "items[*].{name: full_name, stars: stargazers_count}"
 
-Common patterns in task descriptions:
-- "it takes X and Y" → X and Y are parameters
-- "with X parameter" → X is a parameter
-- "accepts X" → X is a parameter
-- "configurable X" → X is a parameter
-- "limit", "count", "per_page" → pagination parameter
-- "page", "page number", "offset" → pagination parameter
-- "username", "user" → user identifier parameter
+PARAMETER EXTRACTION:
+Look for parameters in:
+1. The task description ("it takes X and Y", "with limit parameter")
+2. The URL query string (q=, page=, per_page=, limit=)
+3. Path segments that vary (/users/{username}/repos)
 
-If the user mentions parameters but the discovered URL doesn't include them:
-1. Research the API to find the correct query parameter name
-2. Add the parameter to the URL template
-3. Map user terms to API terms (limit→per_page, count→per_page, page→page)
+Common mappings: limit→per_page, count→per_page, page→page, query→q
 
-URL PARAMETERIZATION RULES:
-When extracting parameters from URLs, follow these conventions:
-
-1. Search queries: Extract search terms as {query} or {search} parameters
-   - Look for q=, query=, search=, keyword= in query strings
-   - The actual search term becomes the parameter, not the field name
-
-2. Pagination: Extract count and page parameters
-   - Use {per_page} or {limit} for items-per-page (default usually 10-50)
-   - Use {page} for page number (default usually 1 or 0)
-   - Look for: per_page=, limit=, count=, page=, offset=
-   - IMPORTANT: If user mentions "limit" or "page", ensure URL includes these params!
-
-3. Date filters: Extract date-based filters
-   - Use {date}, {since}, {created_after}, or {updated_after} as appropriate
-   - Keep the date format from the original URL
-
-4. Sort/order: Keep sort and order parameters if relevant to the task
-   - Usually these should stay as literal values, not parameters
-   - Only parameterize if the user might want different sort orders
-
-5. Complex query syntax: For APIs with query language (like GitHub):
-   - Keep static filters (stars:>1000, language:python) as literals
-   - Only extract the variable part as a parameter
-
-EXAMPLE 1 - GitHub Search API:
-Original URL:
-  https://api.github.com/search/repositories?q=python+stars:>1000&sort=stars&per_page=50
-
-Parameterized URL:
-  https://api.github.com/search/repositories?q={query}+stars:>1000&sort=stars&per_page={count}
-
-Parameters:
-  [
-    {"name": "query", "source": "query", "required": true, "default": null},
-    {"name": "count", "source": "query", "required": false, "default": "50"}
-  ]
-
-Note: "stars:>1000" stays literal because it's a static filter, not user input.
-      "sort=stars" stays literal because sorting is part of the recipe behavior.
-
-EXAMPLE 2 - User-requested parameters (GitHub User Stars):
-Task: "get starred repos for a GitHub user, it takes limit and page number"
-Original URL discovered: https://api.github.com/users/octocat/starred
-
-The user explicitly requested "limit" and "page number" parameters!
-Parameterized URL:
-  https://api.github.com/users/{username}/starred?per_page={limit}&page={page}
-
-Parameters:
-  [
-    {"name": "username", "source": "url", "required": true, "default": null, "description": "GitHub username"},
-    {"name": "limit", "source": "query", "required": false, "default": "30", "description": "Number of repos per page"},
-    {"name": "page", "source": "query", "required": false, "default": "1", "description": "Page number"}
-  ]
-
-Note: Even though the discovered URL didn't have ?per_page=&page=, we ADD them because
-      the user explicitly said "it takes limit and page number". Map user terms to API terms.
-
-If no suitable API was found, return:
+If no recipe can be extracted:
 {
     "success": false,
-    "reason": "Explanation of why no API was found"
+    "reason": "Explanation - e.g., requires multi-step interaction, CAPTCHA, etc."
 }
 """
 
 
-def get_analysis_prompt(task: str, result: str, api_calls: list[dict]) -> str:
+def get_analysis_prompt(
+    task: str,
+    result: str,
+    api_calls: list[dict],
+    final_url: str | None = None,
+    page_html_snippet: str | None = None,
+) -> str:
     """Generate the analysis prompt with recorded data.
 
     Args:
         task: Original user task
         result: Agent's final result
         api_calls: List of API call summaries from recorder
+        final_url: The final page URL where data was found
+        page_html_snippet: Snippet of the page HTML (for HTML-based recipes)
 
     Returns:
         Formatted prompt for recipe analysis
     """
-    # Format API calls for the prompt
+    # Format API calls
     api_calls_text = ""
-    for i, call in enumerate(api_calls, 1):
-        api_calls_text += f"""
+    if api_calls:
+        for i, call in enumerate(api_calls, 1):
+            api_calls_text += f"""
 {i}. {call["method"]} {call["url"]}
    Status: {call["status"]}
    Content-Type: {call["content_type"]}
    Has Response Body: {call["has_body"]}
 """
-        if call.get("post_data"):
-            api_calls_text += f"   Request Body: {call['post_data'][:500]}...\n"
-        if call.get("response_body"):
-            api_calls_text += f"   Response Body (truncated): {call['response_body'][:1000]}...\n"
+            if call.get("post_data"):
+                api_calls_text += f"   Request Body: {call['post_data'][:500]}...\n"
+            if call.get("response_body"):
+                api_calls_text += f"   Response Body (truncated): {call['response_body'][:1000]}...\n"
+    else:
+        api_calls_text = "(No API calls recorded - data likely from HTML page)"
+
+    # Format page info
+    page_info = ""
+    if final_url:
+        page_info += f"\nFINAL PAGE URL:\n{final_url}\n"
+    if page_html_snippet:
+        page_info += f"\nPAGE HTML SNIPPET (relevant section):\n{page_html_snippet[:2000]}\n"
 
     return f"""Analyze this browser session to extract a reusable recipe.
 
@@ -200,18 +157,16 @@ ORIGINAL TASK:
 
 AGENT RESULT:
 {result}
-
-API CALLS RECORDED (XHR/Fetch only):
+{page_info}
+API CALLS RECORDED:
 {api_calls_text}
 
-Identify the "money request" - the API call that returned the data the user asked for.
-Consider which endpoint returned data most relevant to the task.
+INSTRUCTIONS:
+1. If an API call returned the needed data as JSON → create an API-based recipe
+2. If no suitable API but agent extracted from HTML → create an HTML-based recipe with CSS selectors
+3. Extract parameters from the task description (limit, page, query, username, etc.)
 
-CRITICAL - EXTRACT PARAMETERS FROM THE TASK:
-Read the ORIGINAL TASK carefully. The user often specifies what parameters the recipe should accept.
-Look for phrases like "it takes X", "with X parameter", "accepts X and Y", etc.
-These MUST become recipe parameters, even if the discovered URL doesn't include them yet.
-Research the API docs mentally to map user terms (limit, count, page) to API params (per_page, page).
+The recipe should allow replaying this task efficiently without full browser automation.
 
 Return your analysis as JSON.
 """
