@@ -23,20 +23,25 @@ Just complete the task as you normally would:
 3. Extract the data requested
 4. Report what you found
 
-CRITICAL for recipe creation - TEST YOUR SELECTORS:
-- Use browser DevTools or document.querySelectorAll() to verify CSS selectors
-- Test that selectors actually match elements and return expected data
-- Common working selector patterns:
-  - Links: 'a[href*="/specific-path"]'
-  - List items: 'ul li', 'div.list-item'
-  - Data cells: 'td', 'span.value'
-  - React apps often use: '[data-testid="..."]', 'div[class*="component"]'
+CRITICAL for recipe creation - YOU MUST TEST SELECTORS IN THE BROWSER:
+1. Open DevTools Console (or use execute_javascript action)
+2. Run: document.querySelectorAll('your-selector') and verify it returns elements
+3. Only report selectors that ACTUALLY MATCH elements on the page
+4. If a selector returns empty NodeList, TRY DIFFERENT SELECTORS until you find working ones
 
-At the end, summarize:
-- Final URL: [the page/API URL where data was found]
-- CSS Selectors (TESTED): [exact selectors that work, verified with querySelectorAll]
-- Sample data: [first few items extracted with those selectors]
-- Parameters: [what values could be changed for different queries]
+Common selector patterns that often work:
+- List items: 'article', 'li', '.Box-row', '[role="listitem"]'
+- Links with data: 'h3 a', 'a[href*="/specific-path"]'
+- Text content: 'span.text', 'p', 'div.content'
+
+DO NOT GUESS OR INVENT SELECTORS. Only report selectors you have verified work.
+
+At the end, provide VERIFIED results:
+- Final URL: [exact URL where data was found]
+- TESTED Selectors with match counts:
+  - field_name: 'selector' (X matches)
+- Sample extracted data: [first 3-5 items from each selector]
+- Parameters: [values that could be customized]
 """
 
 
