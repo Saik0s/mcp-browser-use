@@ -14,25 +14,46 @@ Recipes can be:
 
 LEARNING_MODE_SUFFIX = """
 
-LEARNING MODE - Complete the task normally.
+LEARNING MODE - Complete the task and TEST CSS SELECTORS.
 
 The system is recording your actions to create a reusable recipe.
-Complete the task as you normally would:
+
+STEPS:
 1. Navigate to the relevant page
-2. Use the 'extract' action to extract the requested data
-3. Report what you found with the exact URL
+2. Use 'extract' to get the data
+3. CRITICAL: Use 'evaluate' action to TEST CSS selectors that find the data
 
-IMPORTANT for recipe creation:
-- Navigate directly to the data page (avoid unnecessary clicks)
-- Use the 'extract' action to get the data
-- Report the EXACT final URL where the data was found
-- Describe the HTML structure (e.g., "repo names are in h3 tags inside article elements")
+TESTING SELECTORS with evaluate action:
+After extracting data, you MUST test CSS selectors using the evaluate action.
+Run JavaScript like this to find working selectors:
 
-At the end, provide these details:
-- Final URL: [exact URL where data was found, with any parameters]
-- Data found: [list the first 3-5 items you extracted]
-- HTML structure: [describe what HTML elements contain the data, e.g., "article > h3 > a for repo names"]
-- Parameters: [values in the URL that could be customized, e.g., username]
+evaluate: (function(){
+  const tests = {
+    'h3 a[href]': document.querySelectorAll('h3 a[href]').length,
+    'article a': document.querySelectorAll('article a').length,
+    'li a': document.querySelectorAll('li a').length
+  };
+  const samples = {};
+  for (const [sel, count] of Object.entries(tests)) {
+    if (count > 0) {
+      samples[sel] = {
+        count: count,
+        first3: Array.from(document.querySelectorAll(sel)).slice(0,3).map(e => e.textContent.trim())
+      };
+    }
+  }
+  return JSON.stringify(samples);
+})()
+
+Try multiple selectors until you find ones that:
+- Return the expected number of items (matching your extracted data)
+- Have simple patterns (h3 a, article a, NOT div.class1.class2 > div > a)
+
+At the end, provide:
+- Final URL: [exact URL]
+- TESTED selectors: [selector: count matches, sample data]
+- Best selector: [the simplest selector that returns correct data]
+- Parameters: [URL parameters that could vary, e.g., username]
 """
 
 
