@@ -476,43 +476,44 @@ class RecipeRunner:
 
         # Build JavaScript to extract data using CSS selectors with validation
         selectors = request.html_selectors or {}
-        js_code = """
-        (function() {
-            const selectors = %s;
-            const result = {_meta: {tested: {}, total_matches: 0}};
+        selectors_json = json.dumps(selectors)
+        js_code = f"""
+        (function() {{
+            const selectors = {selectors_json};
+            const result = {{_meta: {{tested: {{}}, total_matches: 0}}}};
 
-            for (const [name, selector] of Object.entries(selectors)) {
-                try {
+            for (const [name, selector] of Object.entries(selectors)) {{
+                try {{
                     const elements = document.querySelectorAll(selector);
                     const values = Array.from(elements).map(el => el.textContent.trim()).filter(t => t);
                     result[name] = values;
-                    result._meta.tested[name] = {selector, count: elements.length, hasData: values.length > 0};
+                    result._meta.tested[name] = {{selector, count: elements.length, hasData: values.length > 0}};
                     result._meta.total_matches += values.length;
-                } catch (e) {
+                }} catch (e) {{
                     result[name] = [];
-                    result._meta.tested[name] = {selector, error: e.message};
-                }
-            }
+                    result._meta.tested[name] = {{selector, error: e.message}};
+                }}
+            }}
 
             // If all selectors failed, try to find common list patterns
-            if (result._meta.total_matches === 0) {
+            if (result._meta.total_matches === 0) {{
                 const fallbackSelectors = [
                     'article a', 'li a', '.list-item a', '[role="listitem"] a',
                     'h3 a', 'h4 a', '.card a', '.item a'
                 ];
-                for (const sel of fallbackSelectors) {
+                for (const sel of fallbackSelectors) {{
                     const els = document.querySelectorAll(sel);
-                    if (els.length > 3) {
+                    if (els.length > 3) {{
                         result._meta.suggested_selector = sel;
                         result._meta.suggested_count = els.length;
                         break;
-                    }
-                }
-            }
+                    }}
+                }}
+            }}
 
             return JSON.stringify(result);
-        })()
-        """ % json.dumps(selectors)
+        }})()
+        """
 
         try:
             eval_result = await browser_session.cdp_client.send.Runtime.evaluate(

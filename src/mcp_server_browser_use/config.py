@@ -117,8 +117,8 @@ class LLMSettings(MCPBaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="MCP_LLM_")
 
-    provider: ProviderType = Field(default="google")
-    model_name: str = Field(default="gemini-3-flash-preview")
+    provider: ProviderType = Field(default="openrouter")
+    model_name: str = Field(default="moonshotai/kimi-k2.5")
     api_key: SecretStr | None = Field(default=None, description="Generic API key override (highest priority)")
     base_url: str | None = Field(default=None, description="Custom base URL for OpenAI-compatible APIs")
 
