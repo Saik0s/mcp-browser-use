@@ -14,46 +14,77 @@ Recipes can be:
 
 LEARNING_MODE_SUFFIX = """
 
-LEARNING MODE - Complete the task and TEST CSS SELECTORS.
+LEARNING MODE - Extract ALL available data and TEST CSS SELECTORS.
 
-The system is recording your actions to create a reusable recipe.
+Goal: Create a reusable recipe that extracts structured data as JSON.
 
 STEPS:
-1. Navigate to the relevant page
-2. Use 'extract' to get the data
-3. CRITICAL: Use 'evaluate' action to TEST CSS selectors that find the data
+1. Navigate to the data page
+2. Identify ALL data fields visible (names, descriptions, counts, dates, links, etc.)
+3. Use 'evaluate' action to find and TEST CSS selectors for EACH field
 
-TESTING SELECTORS with evaluate action:
-After extracting data, you MUST test CSS selectors using the evaluate action.
-Run JavaScript like this to find working selectors:
+FINDING SELECTORS - Use evaluate to run this JavaScript:
 
 evaluate: (function(){
-  const tests = {
-    'h3 a[href]': document.querySelectorAll('h3 a[href]').length,
-    'article a': document.querySelectorAll('article a').length,
-    'li a': document.querySelectorAll('li a').length
-  };
-  const samples = {};
-  for (const [sel, count] of Object.entries(tests)) {
-    if (count > 0) {
-      samples[sel] = {
-        count: count,
-        first3: Array.from(document.querySelectorAll(sel)).slice(0,3).map(e => e.textContent.trim())
-      };
+  // Test common patterns for list items
+  const patterns = [
+    ['h3 a', 'primary links'],
+    ['h4 a', 'secondary links'],
+    ['article', 'articles'],
+    ['li', 'list items'],
+    ['[class*="item"]', 'item containers'],
+    ['[class*="card"]', 'cards'],
+    ['[class*="row"]', 'rows']
+  ];
+  const results = {};
+  for (const [sel, desc] of patterns) {
+    const els = document.querySelectorAll(sel);
+    if (els.length > 2) {
+      results[sel] = {count: els.length, desc: desc};
     }
   }
-  return JSON.stringify(samples);
+  return JSON.stringify(results);
 })()
 
-Try multiple selectors until you find ones that:
-- Return the expected number of items (matching your extracted data)
-- Have simple patterns (h3 a, article a, NOT div.class1.class2 > div > a)
+Then for each container element, find CHILD selectors for individual fields:
 
-At the end, provide:
-- Final URL: [exact URL]
-- TESTED selectors: [selector: count matches, sample data]
-- Best selector: [the simplest selector that returns correct data]
-- Parameters: [URL parameters that could vary, e.g., username]
+evaluate: (function(){
+  // Replace CONTAINER with the best container selector found above
+  const items = document.querySelectorAll('CONTAINER');
+  if (!items.length) return 'No items found';
+  const first = items[0];
+  // Map all text-containing elements
+  const fields = {};
+  first.querySelectorAll('a, span, p, div, time, [class]').forEach(el => {
+    const text = el.textContent?.trim().slice(0,50);
+    if (text && text.length > 1) {
+      const tag = el.tagName.toLowerCase();
+      const cls = el.className?.split(' ')[0] || '';
+      const key = cls ? tag + '.' + cls : tag;
+      if (!fields[key]) fields[key] = text;
+    }
+  });
+  return JSON.stringify({itemCount: items.length, sampleFields: fields});
+})()
+
+SELECTOR RULES:
+- SIMPLE selectors: "h3 a", "p.description", "span.count"
+- AVOID complex chains: "div.x > div.y > div.z > a"
+- Use attributes when helpful: "a[href*='/repo']", "time[datetime]"
+- Test each selector returns expected count
+
+OUTPUT FORMAT - Provide tested selectors as JSON schema:
+```
+Final URL: [exact URL with parameters]
+Tested Selectors:
+{
+  "item_name": {"selector": "h3 a", "count": 30, "sample": "Example Name"},
+  "item_description": {"selector": "p.desc", "count": 30, "sample": "A description..."},
+  "item_count": {"selector": "span.stars", "count": 30, "sample": "1.2k"},
+  "item_link": {"selector": "h3 a[href]", "count": 30, "sample": "/user/repo", "attr": "href"}
+}
+URL Parameters: [list parameters that vary, e.g., username, page, query]
+```
 """
 
 
@@ -100,13 +131,22 @@ OUTPUT FORMAT:
 
 FOR HTML-BASED RECIPES:
 - Set response_type to "html"
-- Provide html_selectors with SIMPLE, ROBUST CSS selectors for each data field
+- Extract ALL available data fields from the page into html_selectors
 - CRITICAL: Use SHORT selectors that won't break when the page changes:
-  * GOOD: "h3 a", "article a", "a[href*='/stargazers']", "[data-id] a"
+  * GOOD: "h3 a", "p.description", "span.count", "time[datetime]"
   * BAD: "div[class='d-flex col-12 py-3'] > div > a" (too specific, will break)
-- Prefer element-based selectors (h3, article, li) over class-based
-- Use attribute selectors for href patterns: a[href*="/repos/"], a[href$="/stars"]
-- Example: {"repo_names": "h3 a[href]", "stars": "a[href$='/stargazers']"}
+- Look for the agent's "Tested Selectors" JSON output - use those exact selectors
+- Include selectors for: names, descriptions, counts, dates, links, images, etc.
+- For attributes (href, src, datetime), add "@attr" suffix: "a[href]@href", "time@datetime"
+
+Example html_selectors for a repo list:
+{
+  "name": "h3 a",
+  "description": "p.desc",
+  "stars": "span.stars",
+  "link": "h3 a@href",
+  "updated": "time[datetime]@datetime"
+}
 
 FOR API-BASED RECIPES:
 - Set response_type to "json"

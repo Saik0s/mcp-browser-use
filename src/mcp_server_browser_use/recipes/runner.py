@@ -475,6 +475,7 @@ class RecipeRunner:
         await asyncio.sleep(3.0)  # Allow JS to render
 
         # Build JavaScript to extract data using CSS selectors with validation
+        # Supports @attr suffix for extracting attributes (e.g., "a[href]@href")
         selectors = request.html_selectors or {}
         selectors_json = json.dumps(selectors)
         js_code = f"""
@@ -482,16 +483,32 @@ class RecipeRunner:
             const selectors = {selectors_json};
             const result = {{_meta: {{tested: {{}}, total_matches: 0}}}};
 
-            for (const [name, selector] of Object.entries(selectors)) {{
+            for (const [name, selectorSpec] of Object.entries(selectors)) {{
                 try {{
+                    // Check for @attr suffix (e.g., "a[href]@href" extracts href attribute)
+                    let selector = selectorSpec;
+                    let attr = null;
+                    const attrMatch = selectorSpec.match(/^(.+)@([a-zA-Z-]+)$/);
+                    if (attrMatch) {{
+                        selector = attrMatch[1];
+                        attr = attrMatch[2];
+                    }}
+
                     const elements = document.querySelectorAll(selector);
-                    const values = Array.from(elements).map(el => el.textContent.trim()).filter(t => t);
+                    let values;
+                    if (attr) {{
+                        // Extract attribute value
+                        values = Array.from(elements).map(el => el.getAttribute(attr)).filter(v => v);
+                    }} else {{
+                        // Extract text content
+                        values = Array.from(elements).map(el => el.textContent.trim()).filter(t => t);
+                    }}
                     result[name] = values;
-                    result._meta.tested[name] = {{selector, count: elements.length, hasData: values.length > 0}};
+                    result._meta.tested[name] = {{selector: selectorSpec, count: elements.length, hasData: values.length > 0}};
                     result._meta.total_matches += values.length;
                 }} catch (e) {{
                     result[name] = [];
-                    result._meta.tested[name] = {{selector, error: e.message}};
+                    result._meta.tested[name] = {{selector: selectorSpec, error: e.message}};
                 }}
             }}
 
