@@ -17,31 +17,22 @@ LEARNING_MODE_SUFFIX = """
 LEARNING MODE - Complete the task normally.
 
 The system is recording your actions to create a reusable recipe.
-Just complete the task as you normally would:
-1. Navigate to the relevant pages
-2. Click buttons, fill forms as needed
-3. Extract the data requested
-4. Report what you found
+Complete the task as you normally would:
+1. Navigate to the relevant page
+2. Use the 'extract' action to extract the requested data
+3. Report what you found with the exact URL
 
-CRITICAL for recipe creation - YOU MUST TEST SELECTORS IN THE BROWSER:
-1. Open DevTools Console (or use execute_javascript action)
-2. Run: document.querySelectorAll('your-selector') and verify it returns elements
-3. Only report selectors that ACTUALLY MATCH elements on the page
-4. If a selector returns empty NodeList, TRY DIFFERENT SELECTORS until you find working ones
+IMPORTANT for recipe creation:
+- Navigate directly to the data page (avoid unnecessary clicks)
+- Use the 'extract' action to get the data
+- Report the EXACT final URL where the data was found
+- Describe the HTML structure (e.g., "repo names are in h3 tags inside article elements")
 
-Common selector patterns that often work:
-- List items: 'article', 'li', '.Box-row', '[role="listitem"]'
-- Links with data: 'h3 a', 'a[href*="/specific-path"]'
-- Text content: 'span.text', 'p', 'div.content'
-
-DO NOT GUESS OR INVENT SELECTORS. Only report selectors you have verified work.
-
-At the end, provide VERIFIED results:
-- Final URL: [exact URL where data was found]
-- TESTED Selectors with match counts:
-  - field_name: 'selector' (X matches)
-- Sample extracted data: [first 3-5 items from each selector]
-- Parameters: [values that could be customized]
+At the end, provide these details:
+- Final URL: [exact URL where data was found, with any parameters]
+- Data found: [list the first 3-5 items you extracted]
+- HTML structure: [describe what HTML elements contain the data, e.g., "article > h3 > a for repo names"]
+- Parameters: [values in the URL that could be customized, e.g., username]
 """
 
 
@@ -88,8 +79,13 @@ OUTPUT FORMAT:
 
 FOR HTML-BASED RECIPES:
 - Set response_type to "html"
-- Provide html_selectors with CSS selectors for each data field
-- Example: {"repo_names": "article h3 a", "stars": "a[href*='/stargazers']"}
+- Provide html_selectors with SIMPLE, ROBUST CSS selectors for each data field
+- CRITICAL: Use SHORT selectors that won't break when the page changes:
+  * GOOD: "h3 a", "article a", "a[href*='/stargazers']", "[data-id] a"
+  * BAD: "div[class='d-flex col-12 py-3'] > div > a" (too specific, will break)
+- Prefer element-based selectors (h3, article, li) over class-based
+- Use attribute selectors for href patterns: a[href*="/repos/"], a[href$="/stars"]
+- Example: {"repo_names": "h3 a[href]", "stars": "a[href$='/stargazers']"}
 
 FOR API-BASED RECIPES:
 - Set response_type to "json"
