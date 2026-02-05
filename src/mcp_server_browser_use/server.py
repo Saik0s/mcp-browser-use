@@ -413,6 +413,30 @@ def serve() -> FastMCP:
             if skill and recipe_store:
                 recipe_store.record_usage(skill.name, success=is_valid)
 
+            # Capture page HTML before detaching (for HTML-based recipes)
+            page_html_snippet = None
+            if learn and agent:
+                try:
+                    # Access internal browser-use session state (may change in future versions)
+                    sessions = getattr(agent.browser_session, "_active_sessions", {})
+                    current_tab = getattr(agent.browser_session, "_agent_current_tab_id", None)
+                    cdp_session = sessions.get(current_tab) if current_tab else None
+                    if cdp_session:
+                        html_result = await agent.browser_session.cdp_client.send.Runtime.evaluate(
+                            params={
+                                "expression": "document.body ? document.body.outerHTML : document.documentElement.outerHTML",
+                                "returnByValue": True,
+                            },
+                            session_id=cdp_session.session_id,
+                        )
+                        result_obj = html_result.get("result", {})
+                        html_value = result_obj.get("value") if isinstance(result_obj, dict) else None
+                        if html_value:
+                            page_html_snippet = str(html_value)[:5000]
+                            logger.debug(f"Captured page HTML: {len(page_html_snippet)} chars")
+                except Exception as html_err:
+                    logger.warning(f"Could not capture page HTML: {html_err}")
+
             # LEARNING MODE: Attempt to extract skill from execution
             recipe_extraction_result = ""
             if learn and final and save_recipe_as:
@@ -439,10 +463,10 @@ def serve() -> FastMCP:
                         )
                         logger.warning("Using simplified recording - recorder was not attached")
 
-                    # Analyze with LLM - pass final URL for HTML-based recipes
+                    # Analyze with LLM - pass final URL and HTML snippet for HTML-based recipes
                     analyzer = RecipeAnalyzer(llm)
                     final_page_url = last_url if last_url else (navigation_urls[-1] if navigation_urls else None)
-                    extracted_skill = await analyzer.analyze(recording, final_url=final_page_url)
+                    extracted_skill = await analyzer.analyze(recording, final_url=final_page_url, page_html_snippet=page_html_snippet)
 
                     if extracted_skill and recipe_store:
                         extracted_skill.name = save_recipe_as
@@ -1458,6 +1482,29 @@ To learn new recipes, use run_browser_agent with learn=True."""
 
                 final = result.final_result() or "Task completed without explicit result."
 
+                # Capture page HTML before detaching (for HTML-based recipes)
+                page_html_snippet = None
+                try:
+                    # Access internal browser-use session state
+                    sessions = getattr(agent.browser_session, "_active_sessions", {})
+                    current_tab = getattr(agent.browser_session, "_agent_current_tab_id", None)
+                    cdp_session = sessions.get(current_tab) if current_tab else None
+                    if cdp_session:
+                        html_result = await agent.browser_session.cdp_client.send.Runtime.evaluate(
+                            params={
+                                "expression": "document.body ? document.body.outerHTML : document.documentElement.outerHTML",
+                                "returnByValue": True,
+                            },
+                            session_id=cdp_session.session_id,
+                        )
+                        result_obj = html_result.get("result", {})
+                        html_value = result_obj.get("value") if isinstance(result_obj, dict) else None
+                        if html_value:
+                            page_html_snippet = str(html_value)[:5000]
+                            logger.debug(f"Captured page HTML: {len(page_html_snippet)} chars")
+                except Exception as html_err:
+                    logger.warning(f"Could not capture page HTML: {html_err}")
+
                 # Extract skill from execution
                 recipe_extraction_result = ""
                 if final and recipe_name and recipe_store:
@@ -1471,7 +1518,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
                         # Analyze with LLM - use last navigation URL for HTML-based recipes
                         analyzer = RecipeAnalyzer(llm)
                         final_page_url = recording.navigation_urls[-1] if recording.navigation_urls else None
-                        extracted_recipe = await analyzer.analyze(recording, final_url=final_page_url)
+                        extracted_recipe = await analyzer.analyze(recording, final_url=final_page_url, page_html_snippet=page_html_snippet)
 
                         if extracted_recipe:
                             extracted_recipe.name = recipe_name
