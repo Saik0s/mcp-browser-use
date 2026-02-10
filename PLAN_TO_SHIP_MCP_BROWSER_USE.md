@@ -1029,15 +1029,6 @@ Expected net utility:
 
 ### Failure Modes
 
-### Premortem (Most Likely Ways This Fails In 6 Months)
-1. Auth defaults ship soft (TODO-001), server becomes remotely triggerable via non-loopback bind, or dashboard allows drive-by writes.
-2. Transport parity drift, one tier becomes a weaker SSRF filter than others, exploited via redirect/DNS edge cases.
-3. Candidate selection stays weak on common sites, “success rate” changes are unmeasurable without corpus/eval.
-4. Over-redaction treats public high-entropy keys as secrets, silently breaking replay correctness (success rate stalls).
-5. `in_page_fetch` becomes the default path due to weak/absent `context_request`, causing flakier runs (origin/CORS) and worse p95.
-6. Store pollution if validation-before-save is bypassed anywhere in learn path (broken recipes accumulate, trust collapses).
-7. Multi-call tasks are misclassified as recipe-able, causing repeated learning churn instead of an explicit non-recipeable result.
-
 | Threat | Impact | Guardrail | Test |
 |--------|--------|-----------|------|
 | SSRF via recipe URL | Internal network access | `validate_url_safe()` blocks private IPs + DNS rebinding | `test_recipes_security.py` |
@@ -1085,6 +1076,15 @@ Expected net utility:
 | DoS via unbounded task queue | Memory/disk growth, degraded UX | Hard cap queued tasks + bounded retention | `test_limits.py::test_queue_cap` |
 | DoS via SSE connection flood | File descriptor exhaustion | Limit SSE clients; enforce keepalive timeouts | `test_limits.py::test_sse_connection_cap` |
 | DoS via huge request bodies/headers | Memory spike / slow parsing | ASGI limits + explicit max body size | `test_limits.py::test_request_size_limits` |
+
+### Premortem (Most Likely Ways This Fails In 6 Months)
+1. Auth defaults ship soft (TODO-001), server becomes remotely triggerable via non-loopback bind, or dashboard allows drive-by writes.
+2. Transport parity drift, one tier becomes a weaker SSRF filter than others, exploited via redirect/DNS edge cases.
+3. Candidate selection stays weak on common sites, “success rate” changes are unmeasurable without corpus/eval.
+4. Over-redaction treats public high-entropy keys as secrets, silently breaking replay correctness (success rate stalls).
+5. `in_page_fetch` becomes the default path due to weak/absent `context_request`, causing flakier runs (origin/CORS) and worse p95.
+6. Store pollution if validation-before-save is bypassed anywhere in learn path (broken recipes accumulate, trust collapses).
+7. Multi-call tasks are misclassified as recipe-able, causing repeated learning churn instead of an explicit non-recipeable result.
 
 ### Safety Invariants
 
