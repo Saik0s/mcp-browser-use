@@ -1,0 +1,9 @@
+.venv/**
+.pytest_cache/**
+.ruff_cache/**
+.beads/**
+tmp/**
+tests/**
+**/tests/**
+test_*.py
+**/test_*.py
