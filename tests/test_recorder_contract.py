@@ -212,6 +212,34 @@ async def test_recorder_does_not_persist_html_even_if_mime_is_json() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", [")]}',\n", "while(1);\n", "for(;;);\n"])
+@pytest.mark.parametrize("leading_ws", ["", " \n\t"])
+async def test_recorder_does_not_persist_html_with_xssi_prefix_variants_even_if_mime_is_json(prefix: str, leading_ws: str) -> None:
+    recorder = RecipeRecorder(task="t")
+    body = f"{leading_ws}{prefix}<!doctype html><html><body>nope</body></html>"
+    await recorder.attach(_DummyBrowserSession({"body": body, "base64Encoded": False}))
+
+    recorder._on_request_will_be_sent(
+        {"requestId": "1", "type": "XHR", "documentURL": "https://example.com/page", "request": {"url": "https://x", "method": "GET", "headers": {}}},
+        session_id=None,
+    )
+    recorder._on_response_received(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "response": {"url": "https://x", "status": 200, "headers": {"Content-Type": "application/json"}, "mimeType": "application/json"},
+        },
+        session_id=None,
+    )
+
+    await recorder.finalize()
+    recording = recorder.get_recording(result="ok")
+    resp = recording.responses[0]
+    assert resp.body is None
+    assert resp.json_key_sample is None
+
+
+@pytest.mark.asyncio
 async def test_recorder_does_not_persist_html_detected_by_common_tag_prefix() -> None:
     recorder = RecipeRecorder(task="t")
     await recorder.attach(_DummyBrowserSession({"body": "<div>nope</div>", "base64Encoded": False}))
