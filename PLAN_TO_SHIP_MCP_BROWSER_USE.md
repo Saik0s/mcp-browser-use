@@ -1,6 +1,18 @@
+---
+project: mcp-browser-use
+version: "3.0"
+status: reviewed
+oracle_rounds: 7
+dialectical_rounds: 0
+premortem_done: true
+last_reviewed: 2026-02-10
+definition_of_ready: true
+beads_created: true
+---
+
 # PLAN_TO_SHIP_MCP_BROWSER_USE
 
-**Version 2.9** — 2026-02-09
+**Version 3.0** — 2026-02-10
 **Status**: Active Development (feat/fastmcp-3-recipes)
 **Owner**: Igor Tarasenko
 
@@ -932,7 +944,7 @@ Specifically (in priority order):
 - Relaxing extract_path requirement increases success rate significantly
 - Learning mode becomes slower (validation + retry), acceptable for expensive path
 - Learned ranker and ddmin minimization deferred until corpus provides training data
-- Context_request transport deferred until Tier 1 + 3 are proven
+- Transport discipline tightened: prefer `context_request` for session-bound APIs that do not require DOM/page JS; reserve `in_page_fetch` for DOM/CSRF/sessionStorage/CORS parity only.
 
 #### Tests
 - `test_candidates.py` validates deterministic ranking with golden fixtures
@@ -943,11 +955,88 @@ Specifically (in priority order):
 #### Source
 Oracle: GPT-5.2 Pro (heavy thinking), `.apr/rounds/recipe-architecture/round_1.md`
 
+### ADR-6: v1 Recipe Shipping Strategy (EV-Weighted) (v3.0)
+
+#### Problem
+We need v1 recipes to reliably deliver seconds-fast repeats without:
+1) polluting the recipe store with broken drafts, or
+2) shipping a localhost SSRF cannon via policy drift across transports.
+
+Signal: auto-learning success rate is ~20% (small N). Failures cluster around candidate selection + schema discipline (noise), not fundamental impossibility.
+
+#### Options
+A) Full pipeline early (Signals -> Candidates -> LLM -> Validator -> Baseline -> Minimize -> Verify -> Promote)
+B) Interactive-first (always return top-K CandidateSet, user/LLM chooses, then validate+save)
+C) Library-first (curated verified recipes + manual authoring tools, auto-learn later)
+E) Lean hybrid floor (recommended): Signals+Candidates + validation-before-save + interactive fallback for low-confidence or failed validation, then iterate up
+
+#### Decision
+We choose E (lean hybrid floor) as the v1 product promise.
+
+Learning outcome is tri-state (explicit, no ambiguity):
+- `saved_draft`: validated once, written as draft
+- `needs_selection`: return CandidateSet (top K) for interactive selection, no write
+- `non_recipeable`: explicit reason, fall back to agent
+
+Correctness gate:
+- Validation-before-save is the only hard gate for learning. Minimization/promotion/multi-example diffs are quality iteration, not correctness.
+
+Transport strategy:
+- Use the 3-tier design from ADR-3, enforced by parity tests, and always select lowest-risk first:
+  - `httpx_public` -> `context_request` -> `in_page_fetch` (fallback-only)
+
+#### Probability-Weighted Decision Tree (6 month horizon, relative utility)
+Definitions:
+- “recipe-able task”: stable API shortcut exists; session/cookies handled safely.
+- Utility is relative (0-100) and only used for comparing strategies under uncertainty.
+
+| Strategy | Outcome | Prob | Value | Cost | Net |
+|----------|---------|------|-------|------|-----|
+| E (lean hybrid) | High (>=70% validated drafts on recipe-able) | 0.60 | 90 | 40 | 50 |
+| E (lean hybrid) | Medium (40-70%) | 0.30 | 70 | 40 | 30 |
+| E (lean hybrid) | Low (<40%) | 0.10 | 50 | 40 | 10 |
+| A (full pipeline) | High (>=60% auto-learn, stable store) | 0.55 | 100 | 55 | 45 |
+| A (full pipeline) | Medium (30-60%) | 0.30 | 70 | 55 | 15 |
+| A (full pipeline) | Low (~20-30%) | 0.15 | 40 | 55 | -15 |
+| B (interactive-first) | Accepted by users | 0.60 | 80 | 35 | 45 |
+| B (interactive-first) | Friction too high | 0.40 | 50 | 35 | 15 |
+| C (library-first) | Coverage good | 0.40 | 75 | 40 | 35 |
+| C (library-first) | Coverage poor | 0.60 | 45 | 40 | 5 |
+
+Expected net utility:
+- EV(E) = 40
+- EV(B) = 33
+- EV(A) = 27
+- EV(C) = 17
+
+#### Scenario Optimization
+- Personal/power users: E or B, optimize for correctness + speed, tolerate some interaction during learning.
+- Broad OSS users: E plus verified starter library, reduce “learning failed” UX until credibility exists.
+- Sensitive accounts/shared networks: E, but ship auth defaults + parity tests before expanding scope.
+
+#### Consequences
+- Store hygiene is guaranteed: drafts only exist if they worked at least once.
+- Escape hatch is bounded: low-confidence returns CandidateSet or non-recipeable, no silent “LLM failed”.
+- Pipeline stays shippable: correctness gate first, optimizations later.
+
+#### Tests
+- `test_validator.py`: validation-before-save + tri-state learn outcome + “no write unless validated”
+- `test_transport_parity.py`: same hostile scenarios across `httpx_public`, `context_request`, `in_page_fetch`
+
 ---
 
 ## 4. Threat Model
 
 ### Failure Modes
+
+### Premortem (Most Likely Ways This Fails In 6 Months)
+1. Auth defaults ship soft (TODO-001), server becomes remotely triggerable via non-loopback bind, or dashboard allows drive-by writes.
+2. Transport parity drift, one tier becomes a weaker SSRF filter than others, exploited via redirect/DNS edge cases.
+3. Candidate selection stays weak on common sites, “success rate” changes are unmeasurable without corpus/eval.
+4. Over-redaction treats public high-entropy keys as secrets, silently breaking replay correctness (success rate stalls).
+5. `in_page_fetch` becomes the default path due to weak/absent `context_request`, causing flakier runs (origin/CORS) and worse p95.
+6. Store pollution if validation-before-save is bypassed anywhere in learn path (broken recipes accumulate, trust collapses).
+7. Multi-call tasks are misclassified as recipe-able, causing repeated learning churn instead of an explicit non-recipeable result.
 
 | Threat | Impact | Guardrail | Test |
 |--------|--------|-----------|------|
@@ -1590,7 +1679,7 @@ Reference manifest: `.reference/manifest.json` (key paths, patterns to adopt per
 | Heuristic-first or LLM-first for candidate selection? | Heuristic-first for ranking, LLM for choice among top K [Oracle R1] | Decided |
 | Fingerprint comparison: exact hash or similarity? | Jaccard similarity >= 0.85 over typed path sets [Oracle R1] | Decided |
 | ddmin or single-pass for minimization? | Single-pass for v1, ddmin deferred [Oracle R1] | Decided |
-| 2-tier or 3-tier transport for v1? | 2-tier (httpx_public + in_page_fetch), context_request deferred [Oracle R1] | Decided |
+| 2-tier or 3-tier transport for v1? | 3-tier by design (`httpx_public` -> `context_request` -> `in_page_fetch` fallback-only), gated by transport parity tests [ADR-6] | Decided |
 
 ---
 
@@ -1609,6 +1698,12 @@ Reference manifest: `.reference/manifest.json` (key paths, patterns to adopt per
 ---
 
 ## Changelog
+
+### 2026-02-10 — Plan v3.0 (EV Decision Tree + v1 Strategy Lock)
+- Added YAML frontmatter for Flywheel Plan Gate fields (oracle rounds already reflected below).
+- Added ADR-6 with probability-weighted decision tree + expected value, and locked v1 strategy: lean hybrid floor + tri-state learning outcomes.
+- Clarified transport discipline: prefer `context_request` when session-bound but DOM-independent, reserve `in_page_fetch` for true page-context needs.
+- Added a short premortem focused on product/system failure modes (distinct from the security threat model).
 
 ### 2026-02-09 — Plan v2.9 (Recipe Architecture Oracle Review)
 - Applied Oracle recipe architecture review findings (GPT-5.2 Pro, `.apr/rounds/recipe-architecture/round_1.md`):
