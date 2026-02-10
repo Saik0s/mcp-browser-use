@@ -1,6 +1,8 @@
 """Tests for configuration and API key resolution."""
 
 import os
+import subprocess
+import sys
 
 import pytest
 
@@ -252,3 +254,69 @@ class TestConfigFileParsing:
 
         data = config.load_config_file()
         assert data["llm"] == {"provider": "openrouter"}
+
+
+class TestAppSettingsConfigFileBehavior:
+    """AppSettings must treat config file issues consistently with load_config_file()."""
+
+    def test_appsettings_empty_config_file_is_ok(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text("", encoding="utf-8")
+        monkeypatch.setattr(config, "CONFIG_FILE", cfg_file)
+
+        settings = config.AppSettings()
+        assert settings.llm.provider == "openrouter"
+
+    def test_appsettings_invalid_json_raises(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text("{nope", encoding="utf-8")
+        monkeypatch.setattr(config, "CONFIG_FILE", cfg_file)
+
+        with pytest.raises(config.ConfigFileError, match=r"Invalid JSON"):
+            config.AppSettings()
+
+    def test_appsettings_non_object_top_level_raises(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text("[]", encoding="utf-8")
+        monkeypatch.setattr(config, "CONFIG_FILE", cfg_file)
+
+        with pytest.raises(config.ConfigFileError, match=r"top level"):
+            config.AppSettings()
+
+
+class TestCliRepairPath:
+    """CLI must be importable and usable even when config.json is invalid JSON."""
+
+    def test_cli_import_and_config_view_survive_invalid_json(self, tmp_path):
+        home = tmp_path / "home"
+        cfg_dir = home / ".config" / config.APP_NAME
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "config.json").write_text("{nope", encoding="utf-8")
+
+        code = """
+from typer.testing import CliRunner
+
+from mcp_server_browser_use.cli import app
+
+runner = CliRunner()
+result = runner.invoke(app, ["config", "view"])
+assert result.exit_code == 0, result.output
+assert "Invalid JSON" in result.output
+assert "Traceback" not in result.output
+"""
+
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        # Ensure "~" expansion uses HOME consistently.
+        env.pop("XDG_CONFIG_HOME", None)
+
+        completed = subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, f"stdout:\\n{completed.stdout}\\n\\nstderr:\\n{completed.stderr}"
+        assert "Traceback" not in completed.stderr

@@ -2,13 +2,14 @@
 
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
-from typing import Literal, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeGuard
 from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic_settings.sources import JsonConfigSettingsSource, PydanticBaseSettingsSource
+from pydantic_settings.sources import InitSettingsSource, PydanticBaseSettingsSource
 
 # json.loads() returns untyped data. Validate it into JSON-safe types before
 # passing into Pydantic settings. This avoids `Any` and makes failures explicit.
@@ -35,6 +36,7 @@ def _is_json_value(value: object) -> TypeGuard[JsonValue]:
 
 def _is_json_object(value: object) -> TypeGuard[JsonObject]:
     return isinstance(value, dict) and _is_json_value(value)
+
 
 # --- Paths ---
 
@@ -86,9 +88,7 @@ def load_config_file() -> JsonObject:
     try:
         raw: object = json.loads(text)
     except json.JSONDecodeError as e:
-        raise ConfigFileError(
-            f"Invalid JSON in config file {CONFIG_FILE} (line {e.lineno}, column {e.colno}): {e.msg}"
-        ) from e
+        raise ConfigFileError(f"Invalid JSON in config file {CONFIG_FILE} (line {e.lineno}, column {e.colno}): {e.msg}") from e
 
     if not _is_json_object(raw):
         raise ConfigFileError(f"Config file {CONFIG_FILE} must contain a JSON object at the top level")
@@ -294,14 +294,11 @@ class AppSettings(MCPBaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        try:
-            file_settings = JsonConfigSettingsSource(settings_cls, json_file=CONFIG_FILE, json_file_encoding="utf-8")
-        except json.JSONDecodeError as e:
-            raise ConfigFileError(
-                f"Invalid JSON in config file {CONFIG_FILE} (line {e.lineno}, column {e.colno}): {e.msg}"
-            ) from e
-        except OSError as e:
-            raise ConfigFileError(f"Failed to read config file {CONFIG_FILE}: {e}") from e
+        # We use our own loader to ensure consistent behavior:
+        # - empty-but-present file => no config ({}), not JSONDecodeError
+        # - invalid JSON => ConfigFileError (fail loudly)
+        # - non-object top-level => ConfigFileError (fail loudly)
+        file_settings = InitSettingsSource(settings_cls, load_config_file())
 
         return (
             env_settings,
@@ -320,12 +317,17 @@ class AppSettings(MCPBaseSettings):
 
     def save(self) -> Path:
         """Save current configuration to file (excluding secrets)."""
-        data = self.model_dump(mode="json", exclude_none=True)
+        raw: object = self.model_dump(mode="json", exclude_none=True)
+        if not _is_json_object(raw):
+            raise RuntimeError("AppSettings.model_dump produced non-JSON-safe output")
+        data: JsonObject = raw
         # Remove secret values from saved config
-        if "llm" in data:
-            data["llm"].pop("api_key", None)
-        if "server" in data:
-            data["server"].pop("auth_token", None)
+        llm_val = data.get("llm")
+        if isinstance(llm_val, dict):
+            llm_val.pop("api_key", None)
+        server_val = data.get("server")
+        if isinstance(server_val, dict):
+            server_val.pop("auth_token", None)
         save_config_file(data)
         return CONFIG_FILE
 
@@ -339,9 +341,63 @@ class AppSettings(MCPBaseSettings):
         return path
 
 
-def _load_settings() -> AppSettings:
-    """Load settings with config file as base, env vars overlay."""
+class AppSettingsEnvOnly(MCPBaseSettings):
+    """App settings without config file source.
+
+    Used for CLI repair paths that must work even when the JSON file is broken.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="MCP_", extra="ignore")
+
+    llm: LLMSettings = Field(default_factory=LLMSettings)
+    browser: BrowserSettings = Field(default_factory=BrowserSettings)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
+    server: ServerSettings = Field(default_factory=ServerSettings)
+    research: ResearchSettings = Field(default_factory=ResearchSettings)
+    recipes: RecipesSettings = Field(default_factory=RecipesSettings)
+
+    def save(self) -> Path:
+        """Save current configuration to file (excluding secrets)."""
+        raw: object = self.model_dump(mode="json", exclude_none=True)
+        if not _is_json_object(raw):
+            raise RuntimeError("AppSettingsEnvOnly.model_dump produced non-JSON-safe output")
+        data: JsonObject = raw
+        llm_val = data.get("llm")
+        if isinstance(llm_val, dict):
+            llm_val.pop("api_key", None)
+        server_val = data.get("server")
+        if isinstance(server_val, dict):
+            server_val.pop("auth_token", None)
+        save_config_file(data)
+        return CONFIG_FILE
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> AppSettings:
+    """Load strict settings (env > config file > defaults).
+
+    Raises ConfigFileError when the config file is present but invalid.
+    """
     return AppSettings()
 
 
-settings = _load_settings()
+def get_settings_env_only() -> AppSettingsEnvOnly:
+    """Load settings from env+defaults only (never reads config file)."""
+    return AppSettingsEnvOnly()
+
+
+class _SettingsProxy:
+    """Lazy settings accessor.
+
+    Import-time must not hard-fail for the CLI repair path.
+    Accessing attributes triggers strict load and can raise ConfigFileError.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(get_settings(), name)
+
+
+if TYPE_CHECKING:
+    settings: AppSettings
+else:
+    settings = _SettingsProxy()
