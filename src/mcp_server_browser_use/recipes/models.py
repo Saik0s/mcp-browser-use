@@ -10,6 +10,7 @@ Execution uses browser's fetch() via CDP for:
 - Preserved auth state
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -18,20 +19,92 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 RecipeDifficulty = Literal["trivial", "easy", "medium", "hard"]
 RecipeCategory = Literal["developer", "finance", "ecommerce", "jobs", "social", "productivity", "other"]
 
-# Sensitive headers that should be stripped before saving recipes
-SENSITIVE_HEADERS = frozenset(
+SENSITIVE_HEADER_SUBSTRINGS: tuple[str, ...] = (
+    # Token/segment match, header names only (case-insensitive).
+    #
+    # This intentionally avoids naive substring matching like "auth" in ":authority" or "author".
+    # We match whole tokens so we catch variants like:
+    # - X-Auth-Token, X-Access-Token, X-CSRF-Token, X-Session-Id, etc.
+    "auth",
+    "authorization",
+    "token",
+    "cookie",
+    "csrf",
+    "xsrf",
+    "session",
+)
+
+SENSITIVE_HEADER_COMPOUND_TOKENS: frozenset[str] = frozenset(
     {
-        "authorization",
-        "cookie",
-        "set-cookie",
-        "x-api-key",
-        "x-auth-token",
-        "x-csrf-token",
-        "x-session-id",
-        "bearer",
-        "api-key",
+        # Common compact spellings where tokenization cannot split "csrf"+"token".
+        "csrftoken",
+        "xcsrftoken",
+        "xsrftoken",
+        "xxsrftoken",
     }
 )
+
+# Explicit allowlist for header names that are known to be safe to persist/log
+# even though they match the sensitive substring rules above.
+#
+# Keep this list tight. If a header might include PII or secrets, do not allowlist it.
+PUBLIC_HEADER_ALLOWLIST = frozenset(
+    {
+        # Common non-secret "CSRF protection enabled" style flags.
+        "x-csrf-protection",
+        "x-csrf-protected",
+        "x-csrf-enabled",
+    }
+)
+
+
+def _normalize_header_name_for_matching(name: str) -> str:
+    # RFC 9110 header field-names are case-insensitive. We normalize common separators
+    # so "X_API_KEY" and "X-API-Key" are treated equivalently.
+    return "-".join(name.strip().lower().replace("_", "-").split())
+
+
+_HEADER_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _header_tokens(canonical_name: str) -> tuple[str, ...]:
+    """Split a header name into alnum tokens.
+
+    Examples:
+    - "x-auth-token" -> ("x", "auth", "token")
+    - "x-csrftoken" -> ("x", "csrftoken")
+    - ":authority" -> ("authority",)
+    """
+    return tuple(_HEADER_TOKEN_RE.findall(canonical_name))
+
+
+def is_sensitive_header_name(name: str) -> bool:
+    """Return True if the header name should be stripped/redacted.
+
+    Deterministic, token-based matching with a small explicit allowlist.
+    """
+    canonical = _normalize_header_name_for_matching(name)
+    if canonical in PUBLIC_HEADER_ALLOWLIST:
+        return False
+
+    tokens = _header_tokens(canonical)
+    squashed = "".join(tokens)
+
+    # Whole-token matching avoids false positives like ":authority" matching "auth".
+    if any(token in SENSITIVE_HEADER_SUBSTRINGS for token in tokens):
+        return True
+
+    # "api-key" variants are common and worth matching explicitly.
+    if "apikey" in tokens or ("api" in tokens and "key" in tokens) or "apikey" in squashed:
+        return True
+
+    # "X-CSRFToken" and similar compact spellings.
+    if any(token in SENSITIVE_HEADER_COMPOUND_TOKENS for token in tokens):
+        return True
+    if "csrftoken" in squashed or "xsrftoken" in squashed:
+        return True
+
+    return False
 
 
 def strip_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -40,7 +113,7 @@ def strip_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
     Unlike redaction, this completely removes sensitive headers
     rather than replacing values with '***REDACTED***'.
     """
-    return {k: v for k, v in headers.items() if k.lower() not in SENSITIVE_HEADERS}
+    return {k: v for k, v in headers.items() if not is_sensitive_header_name(k)}
 
 
 # --- Recording Models (captured during learning) ---
@@ -57,6 +130,7 @@ class NetworkRequest:
     resource_type: str = ""  # XHR, Fetch, Document, etc.
     timestamp: float = 0.0
     request_id: str = ""
+    initiator_url: str | None = None  # Page URL that initiated this request (CDP documentURL / initiator.url)
 
 
 @dataclass
@@ -68,8 +142,19 @@ class NetworkResponse:
     headers: dict[str, str] = field(default_factory=dict)
     body: str | None = None  # Response body (if captured)
     mime_type: str = ""
-    timestamp: float = 0.0
+    timestamp: float = 0.0  # responseReceived time (wall clock)
     request_id: str = ""
+    content_type: str | None = None  # Prefer response header Content-Type, fallback to mime_type
+    byte_length: int | None = None  # Encoded byte length from Network.loadingFinished, if available
+
+    # Derived signals (for contract + analysis)
+    json_key_sample: str | None = None  # <= 200 chars, best-effort sample of JSON keys/paths
+
+    # Timing signals (ms), derived from request/response/loadingFinished
+    request_timestamp: float | None = None
+    loading_finished_timestamp: float | None = None
+    ttfb_ms: float | None = None
+    total_ms: float | None = None
 
 
 @dataclass

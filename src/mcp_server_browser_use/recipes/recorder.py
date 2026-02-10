@@ -16,32 +16,18 @@ with browser-use's CDP client for network event capture.
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from .models import NetworkRequest, NetworkResponse, SessionRecording
+from .models import NetworkRequest, NetworkResponse, SessionRecording, is_sensitive_header_name
 
 if TYPE_CHECKING:
     from browser_use.browser.session import BrowserSession
-    from cdp_use.cdp.network.events import LoadingFailedEvent, RequestWillBeSentEvent, ResponseReceivedEvent
+    from cdp_use.cdp.network.events import LoadingFailedEvent, LoadingFinishedEvent, RequestWillBeSentEvent, ResponseReceivedEvent
 
 logger = logging.getLogger(__name__)
-
-# Headers that should be redacted for security
-SENSITIVE_HEADERS = frozenset(
-    {
-        "authorization",
-        "cookie",
-        "set-cookie",
-        "x-csrf-token",
-        "x-xsrf-token",
-        "x-api-key",
-        "api-key",
-        "x-auth-token",
-        "x-access-token",
-    }
-)
 
 # Content types that indicate JSON API responses
 JSON_CONTENT_TYPES = frozenset(
@@ -53,11 +39,85 @@ JSON_CONTENT_TYPES = frozenset(
     }
 )
 
-# Maximum body size to capture (128KB)
-MAX_BODY_SIZE = 128 * 1024
+# Maximum body size to capture and store (32KB).
+#
+# Contract:
+# - MUST NOT capture >32KB response body
+# - MUST NOT capture full HTML
+# - MUST NOT capture raw binary
+MAX_BODY_SIZE = 32 * 1024
 
 # Timeout for body capture (5 seconds)
 BODY_CAPTURE_TIMEOUT = 5.0
+
+
+_HTML_PREFIX_RE = re.compile(r"^\s*<(?:!doctype|html)\b", re.IGNORECASE)
+_JSON_KEY_RE = re.compile(r'"([^"]{1,200})"\s*:', re.MULTILINE)
+
+
+def _get_header_value(headers: dict[str, str], name: str) -> str | None:
+    target = name.strip().lower()
+    for k, v in headers.items():
+        if k.strip().lower() == target:
+            return v
+    return None
+
+
+def _looks_like_html(body: str) -> bool:
+    # Fast and intentionally blunt. If it looks like HTML, we do not persist it.
+    head = body[:1024]
+    return _HTML_PREFIX_RE.search(head) is not None
+
+
+def _json_key_sample(body: str, *, max_chars: int = 200) -> str | None:
+    """Best-effort JSON key/path sample for analysis, capped to max_chars.
+
+    Strategy:
+    - Try json.loads and walk keys into dot paths (stable signal).
+    - If that fails (partial/truncated/invalid JSON), fall back to regex `"key":` scanning.
+    """
+    import json
+
+    def emit_paths(value: object, prefix: str, out: list[str], budget: int) -> None:
+        if budget <= 0:
+            return
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if not isinstance(k, str):
+                    continue
+                path = f"{prefix}.{k}" if prefix else k
+                out.append(path)
+                if len(",".join(out)) >= budget:
+                    return
+                emit_paths(v, path, out, budget)
+        elif isinstance(value, list):
+            # Sample only first few entries to avoid blowups.
+            for idx, item in enumerate(value[:3]):
+                path = f"{prefix}[{idx}]" if prefix else f"[{idx}]"
+                emit_paths(item, path, out, budget)
+                if len(",".join(out)) >= budget:
+                    return
+
+    try:
+        parsed = json.loads(body)
+        paths: list[str] = []
+        emit_paths(parsed, "", paths, max_chars)
+        if not paths:
+            return None
+        sample = ",".join(paths)
+        return sample[:max_chars]
+    except Exception:
+        keys: list[str] = []
+        for m in _JSON_KEY_RE.finditer(body[:MAX_BODY_SIZE]):
+            key = m.group(1)
+            if key not in keys:
+                keys.append(key)
+            sample = ",".join(keys)
+            if len(sample) >= max_chars:
+                return sample[:max_chars]
+        if not keys:
+            return None
+        return ",".join(keys)[:max_chars]
 
 
 class RecipeRecorder:
@@ -118,7 +178,7 @@ class RecipeRecorder:
 
         result = {}
         for key, value in headers.items():
-            if key.lower() in SENSITIVE_HEADERS:
+            if is_sensitive_header_name(key):
                 result[key] = "[REDACTED]"
             else:
                 result[key] = value
@@ -146,6 +206,7 @@ class RecipeRecorder:
         cdp_client.register.Network.requestWillBeSent(self._on_request_will_be_sent)
         cdp_client.register.Network.responseReceived(self._on_response_received)
         cdp_client.register.Network.loadingFailed(self._on_loading_failed)
+        cdp_client.register.Network.loadingFinished(self._on_loading_finished)
 
         # Enable Network domain to receive events
         # Enable on browser-wide level (no session_id) to capture ALL network traffic
@@ -181,6 +242,19 @@ class RecipeRecorder:
             # Determine resource type
             resource_type = event.get("type", "Other").lower()
 
+            initiator_url: str | None = None
+            document_url = event.get("documentURL")
+            if isinstance(document_url, str) and document_url:
+                initiator_url = document_url
+            else:
+                initiator = event.get("initiator", {})
+                if isinstance(initiator, dict):
+                    initiator_field = initiator.get("url")
+                    if isinstance(initiator_field, str) and initiator_field:
+                        initiator_url = initiator_field
+            if not initiator_url and self._navigation_urls:
+                initiator_url = self._navigation_urls[-1]
+
             # Capture request details
             network_request = NetworkRequest(
                 url=request_data.get("url", ""),
@@ -190,6 +264,7 @@ class RecipeRecorder:
                 resource_type=resource_type,
                 timestamp=time.time(),
                 request_id=request_id,
+                initiator_url=initiator_url,
             )
 
             self._requests[request_id] = network_request
@@ -218,16 +293,34 @@ class RecipeRecorder:
 
             # Get content type
             mime_type = response_data.get("mimeType", "")
+            content_type = _get_header_value(raw_headers, "content-type") or mime_type
+            byte_length: int | None = None
+            content_length = _get_header_value(raw_headers, "content-length")
+            if isinstance(content_length, str) and content_length:
+                try:
+                    byte_length = int(content_length.strip())
+                except Exception:
+                    byte_length = None
 
             # Capture response details
+            request_ts: float | None = None
+            request_obj = self._requests.get(request_id)
+            if request_obj is not None:
+                request_ts = request_obj.timestamp
+
+            now_ts = time.time()
             network_response = NetworkResponse(
                 url=response_data.get("url", ""),
                 status=response_data.get("status", 0),
                 headers=self._redact_headers(raw_headers),
                 body=None,  # Body captured async if needed
                 mime_type=mime_type,
-                timestamp=time.time(),
+                timestamp=now_ts,
                 request_id=request_id,
+                content_type=content_type,
+                byte_length=byte_length,
+                request_timestamp=request_ts,
+                ttfb_ms=((now_ts - request_ts) * 1000.0) if request_ts is not None else None,
             )
 
             self._responses.append(network_response)
@@ -276,6 +369,27 @@ class RecipeRecorder:
         except Exception as e:
             logger.debug(f"Error recording CDP loading failure: {e}")
 
+    def _on_loading_finished(self, event: "LoadingFinishedEvent", session_id: str | None) -> None:
+        """Handle CDP Network.loadingFinished event."""
+        try:
+            request_id = event.get("requestId", "")
+            encoded_len = event.get("encodedDataLength")
+
+            resp = self._cdp_to_response.get(request_id)
+            if resp is None:
+                return
+
+            if isinstance(encoded_len, (int, float)):
+                resp.byte_length = int(encoded_len)
+
+            finished_ts = time.time()
+            resp.loading_finished_timestamp = finished_ts
+            if resp.request_timestamp is not None:
+                resp.total_ms = (finished_ts - resp.request_timestamp) * 1000.0
+
+        except Exception as e:
+            logger.debug(f"Error recording CDP loading finished: {e}")
+
     async def _capture_body_cdp(self, request_id: str, network_response: NetworkResponse, session_id: str | None) -> None:
         """Capture response body via CDP Network.getResponseBody.
 
@@ -302,18 +416,23 @@ class RecipeRecorder:
 
                 # Handle base64 encoded bodies
                 if result.get("base64Encoded", False):
-                    import base64
+                    # Contract: do not persist raw binary in recorder artifacts.
+                    network_response.body = None
+                    network_response.json_key_sample = None
+                    return
 
-                    try:
-                        body = base64.b64decode(body).decode("utf-8", errors="replace")
-                    except Exception:
-                        body = "[Binary content - base64 decode failed]"
-
-                # Truncate if too large
+                # Enforce storage caps (strict, no marker suffix that might exceed MAX_BODY_SIZE).
                 if len(body) > MAX_BODY_SIZE:
-                    body = body[:MAX_BODY_SIZE] + f"\n... [TRUNCATED at {MAX_BODY_SIZE} bytes]"
+                    body = body[:MAX_BODY_SIZE]
+
+                # Contract: never persist HTML bodies.
+                if _looks_like_html(body):
+                    network_response.body = None
+                    network_response.json_key_sample = None
+                    return
 
                 network_response.body = body
+                network_response.json_key_sample = _json_key_sample(body, max_chars=200)
 
             except TimeoutError:
                 logger.debug(f"CDP body capture timed out for request {request_id[:8]}")
