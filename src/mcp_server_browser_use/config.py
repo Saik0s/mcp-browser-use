@@ -3,12 +3,38 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal, TypeAlias, TypeGuard
 from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic_settings.sources import PydanticBaseSettingsSource
+from pydantic_settings.sources import JsonConfigSettingsSource, PydanticBaseSettingsSource
+
+# json.loads() returns untyped data. Validate it into JSON-safe types before
+# passing into Pydantic settings. This avoids `Any` and makes failures explicit.
+JsonPrimitive: TypeAlias = str | int | float | bool | None
+JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
+JsonObject: TypeAlias = dict[str, JsonValue]
+
+
+class ConfigFileError(RuntimeError):
+    """Raised when the on-disk config exists but cannot be read or parsed."""
+
+
+def _is_json_value(value: object) -> TypeGuard[JsonValue]:
+    if value is None:
+        return True
+    if isinstance(value, (str, int, float, bool)):
+        return True
+    if isinstance(value, list):
+        return all(_is_json_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(key, str) and _is_json_value(item) for key, item in value.items())
+    return False
+
+
+def _is_json_object(value: object) -> TypeGuard[JsonObject]:
+    return isinstance(value, dict) and _is_json_value(value)
 
 # --- Paths ---
 
@@ -40,21 +66,37 @@ def get_default_results_dir() -> Path:
 CONFIG_FILE = get_config_dir() / "config.json"
 
 
-def load_config_file() -> dict[str, Any]:
-    """Load settings from the JSON config file if it exists."""
+def load_config_file() -> JsonObject:
+    """Load settings from the JSON config file if it exists.
+
+    Missing or empty config file is treated as "no config" (returns {}).
+    A present-but-invalid config file is a hard error (ConfigFileError).
+    """
     if not CONFIG_FILE.exists():
         return {}
 
     try:
         text = CONFIG_FILE.read_text(encoding="utf-8")
-        if not text.strip():
-            return {}
-        return json.loads(text)
-    except Exception:
+    except OSError as e:
+        raise ConfigFileError(f"Failed to read config file {CONFIG_FILE}: {e}") from e
+
+    if not text.strip():
         return {}
 
+    try:
+        raw: object = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ConfigFileError(
+            f"Invalid JSON in config file {CONFIG_FILE} (line {e.lineno}, column {e.colno}): {e.msg}"
+        ) from e
 
-def save_config_file(config_data: dict[str, Any]) -> None:
+    if not _is_json_object(raw):
+        raise ConfigFileError(f"Config file {CONFIG_FILE} must contain a JSON object at the top level")
+
+    return raw
+
+
+def save_config_file(config_data: JsonObject) -> None:
     """Save settings to the JSON config file."""
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(config_data, indent=2), encoding="utf-8")
@@ -242,6 +284,32 @@ class AppSettings(MCPBaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="MCP_", extra="ignore")
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        try:
+            file_settings = JsonConfigSettingsSource(settings_cls, json_file=CONFIG_FILE, json_file_encoding="utf-8")
+        except json.JSONDecodeError as e:
+            raise ConfigFileError(
+                f"Invalid JSON in config file {CONFIG_FILE} (line {e.lineno}, column {e.colno}): {e.msg}"
+            ) from e
+        except OSError as e:
+            raise ConfigFileError(f"Failed to read config file {CONFIG_FILE}: {e}") from e
+
+        return (
+            env_settings,
+            file_settings,
+            init_settings,
+            dotenv_settings,
+            file_secret_settings,
+        )
+
     llm: LLMSettings = Field(default_factory=LLMSettings)
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
@@ -271,10 +339,8 @@ class AppSettings(MCPBaseSettings):
 
 
 def _load_settings() -> AppSettings:
-    """Load settings with file config as base, env vars overlay."""
-    file_data = load_config_file()
-    # Pydantic will overlay env vars on top
-    return AppSettings(**file_data)
+    """Load settings with config file as base, env vars overlay."""
+    return AppSettings()
 
 
 settings = _load_settings()

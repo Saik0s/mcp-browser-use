@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+import mcp_server_browser_use.config as config
 from mcp_server_browser_use.config import (
     NO_KEY_PROVIDERS,
     STANDARD_ENV_VAR_NAMES,
@@ -160,17 +161,17 @@ class TestLLMSettingsDefaults:
                 monkeypatch.delenv(var, raising=False)
 
     def test_default_provider(self, monkeypatch):
-        """Default provider should be google."""
+        """Default provider should be openrouter."""
         # Ensure no env vars override the default
         monkeypatch.delenv("MCP_LLM_PROVIDER", raising=False)
         settings = LLMSettings()
-        assert settings.provider == "google"
+        assert settings.provider == "openrouter"
 
     def test_default_model(self, monkeypatch):
-        """Default model should be gemini-3-flash-preview."""
+        """Default model should be moonshotai/kimi-k2.5."""
         monkeypatch.delenv("MCP_LLM_MODEL_NAME", raising=False)
         settings = LLMSettings()
-        assert "gemini" in settings.model_name.lower()
+        assert "kimi" in settings.model_name.lower()
 
     def test_azure_defaults(self, monkeypatch):
         """Azure should have sensible defaults."""
@@ -210,3 +211,44 @@ class TestProviderTypeValidation:
             monkeypatch.setenv("MCP_LLM_PROVIDER", provider)
             settings = LLMSettings()
             assert settings.provider == provider
+
+
+class TestConfigFileParsing:
+    """Config file loading should fail loudly on invalid input."""
+
+    def test_missing_config_file_is_ok(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "config.json"
+        monkeypatch.setattr(config, "CONFIG_FILE", cfg_file)
+
+        assert config.load_config_file() == {}
+
+    def test_empty_config_file_is_ok(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text("", encoding="utf-8")
+        monkeypatch.setattr(config, "CONFIG_FILE", cfg_file)
+
+        assert config.load_config_file() == {}
+
+    def test_invalid_json_raises(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text("{nope", encoding="utf-8")
+        monkeypatch.setattr(config, "CONFIG_FILE", cfg_file)
+
+        with pytest.raises(config.ConfigFileError, match=r"Invalid JSON"):
+            config.load_config_file()
+
+    def test_non_object_top_level_raises(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text("[]", encoding="utf-8")
+        monkeypatch.setattr(config, "CONFIG_FILE", cfg_file)
+
+        with pytest.raises(config.ConfigFileError, match=r"top level"):
+            config.load_config_file()
+
+    def test_valid_object_parses(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text('{ "llm": { "provider": "openrouter" } }', encoding="utf-8")
+        monkeypatch.setattr(config, "CONFIG_FILE", cfg_file)
+
+        data = config.load_config_file()
+        assert data["llm"] == {"provider": "openrouter"}
