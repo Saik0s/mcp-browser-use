@@ -116,18 +116,39 @@ def _looks_like_html(body: str) -> bool:
     #
     # Rationale: avoid brittle tag allowlists that can be bypassed by uncommon tags like <main>
     # or payloads like <!-- ... --> or <?xml ... ?>.
+    #
+    # Some endpoints send XSSI prefixes like `)]}',\n` before the actual payload. If the payload
+    # is HTML, naive `<`-prefix checks are bypassed. Strip common XSSI prefixes before checking.
     if not body:
         return False
-    i = 0
-    n = len(body)
-    while i < n:
-        ch = body[i]
-        # Match str.lstrip() behavior for whitespace, plus a leading UTF-8 BOM if present.
-        if ch.isspace() or ch == "\ufeff":
-            i += 1
-            continue
-        return ch == "<"
-    return False
+
+    def _strip_ws_and_bom(value: str) -> str:
+        i = 0
+        n = len(value)
+        while i < n:
+            ch = value[i]
+            if ch.isspace() or ch == "\ufeff":
+                i += 1
+                continue
+            return value[i:]
+        return ""
+
+    def _strip_one_xssi_prefix(value: str) -> str:
+        # Keep this minimal and conservative: strip only known prefixes at the very start.
+        prefixes = (")]}',", "while(1);", "for(;;);")
+        for prefix in prefixes:
+            if value.startswith(prefix):
+                return _strip_ws_and_bom(value[len(prefix) :])
+        return value
+
+    s = _strip_ws_and_bom(body)
+    while True:
+        stripped = _strip_one_xssi_prefix(s)
+        if stripped == s:
+            break
+        s = stripped
+
+    return s.startswith("<")
 
 
 def _truncate_utf8_bytes(value: str, *, max_bytes: int) -> str:
