@@ -8,9 +8,64 @@ MCP server wrapping [browser-use](https://github.com/browser-use/browser-use) fo
 
 ```bash
 # Before committing (mandatory)
-uv sync && uv run ruff format . && uv run ruff check . && uv run pyright && uv run pytest
+just check    # format + lint + typecheck + test
 
-# Or use: just check
+# Or manually:
+uv sync && uv run ruff format . && uv run ruff check . && uv run pyright && uv run pytest
+```
+
+## How It Works
+
+```
+MCP Client (Claude Desktop, Cursor, etc.)
+       │
+       │  HTTP (streamable-http on :8383)
+       ▼
+┌──────────────────────────────────────────┐
+│   FastMCP Server (daemon)                │
+│                                          │
+│   MCP Tools:                             │
+│   - run_browser_agent (60-120s)          │
+│   - run_deep_research (2-5 min)          │
+│   - recipe_list/get/delete/run_direct    │
+│   - health_check, task_list/get/cancel   │
+│                                          │
+│   REST API:     Web Dashboard:           │
+│   /api/health   GET / (viewer)           │
+│   /api/tasks    GET /dashboard           │
+│   /api/recipes  SSE /api/events          │
+│   /api/learn                             │
+└──────────┬───────────────────────────────┘
+           │
+  ┌────────┼────────┬──────────┬────────────┐
+  ▼        ▼        ▼          ▼            ▼
+Config   LLM     Recipes    Research    Observability
+Pydantic Factory CDP+YAML   State Mach  SQLite+SSE
+         12 provs                       Task tracking
+                    │
+           ┌────────┴────────┐
+           ▼                 ▼
+      Direct Exec       browser-use
+      CDP fetch()       Agent + Playwright
+      ~2 seconds        ~60 seconds
+           │                 │
+           └────────┬────────┘
+                    ▼
+                Chromium
+            (headless or headed)
+```
+
+### Connection Methods
+
+```bash
+# 1. Native HTTP (preferred, if client supports streamable-http)
+# Client config: {"url": "http://localhost:8383/mcp"}
+
+# 2. mcp-remote bridge (works with any MCP client)
+# Client config: {"command": "npx", "args": ["mcp-remote", "http://localhost:8383/mcp"]}
+
+# 3. Stdio proxy (backward compat, auto-starts server)
+# Client config: {"command": "uvx", "args": ["mcp-server-browser-use"]}
 ```
 
 ## Repository Map
@@ -18,31 +73,36 @@ uv sync && uv run ruff format . && uv run ruff check . && uv run pyright && uv r
 ```
 mcp-server-browser-use/
 ├── src/mcp_server_browser_use/
-│   ├── server.py          # FastMCP server, MCP tools, REST API, SSE (1556 lines)
+│   ├── server.py          # FastMCP server, MCP tools, REST API, SSE (~1825 lines)
 │   ├── cli.py             # Typer CLI for daemon management (771 lines)
-│   ├── config.py          # Pydantic settings - all config here (259 lines)
-│   ├── providers.py       # LLM factory (12 providers)
+│   ├── config.py          # Pydantic settings, env vars + config file (281 lines)
+│   ├── providers.py       # LLM factory (12 providers, 130 lines)
 │   ├── observability/     # Task tracking
 │   │   ├── models.py      # TaskRecord, TaskStatus, TaskStage
-│   │   ├── store.py       # SQLite persistence, SSE streaming
-│   │   └── logging.py     # Structured logging setup
-│   ├── recipes/           # Learned API shortcuts (was "skills")
-│   │   ├── models.py      # Recipe, RecipeRequest, RecipeHints (600 lines)
+│   │   ├── store.py       # SQLite persistence (WAL mode, async)
+│   │   └── logging.py     # Structured logging (structlog + contextvars)
+│   ├── recipes/           # Learned API shortcuts
+│   │   ├── models.py      # Recipe, RecipeRequest, RecipeHints (~700 lines)
 │   │   ├── store.py       # YAML persistence in ~/.config/browser-recipes/
-│   │   ├── recorder.py    # CDP network capture during agent runs
-│   │   ├── analyzer.py    # LLM analysis to extract API patterns
-│   │   ├── runner.py      # Direct execution via CDP fetch (661 lines)
-│   │   ├── executor.py    # Hint injection for fallback mode
-│   │   ├── manifest.py    # Recipe discovery and metadata
-│   │   └── prompts.py     # LLM prompts for recipe analysis
+│   │   ├── recorder.py    # CDP network capture during agent runs (~437 lines)
+│   │   ├── analyzer.py    # LLM analysis to extract API patterns (~314 lines)
+│   │   ├── runner.py      # Direct execution via CDP fetch (~809 lines)
+│   │   ├── executor.py    # Hint injection for fallback mode (72 lines)
+│   │   ├── manifest.py    # Recipe discovery and metadata (170 lines)
+│   │   └── prompts.py     # LLM prompts for recipe analysis (260 lines)
 │   └── research/          # Deep research workflow
-│       ├── models.py      # ResearchState, ResearchResult
-│       └── machine.py     # Multi-search state machine
-├── tests/                 # 275+ tests (unit, integration, e2e, dashboard)
-├── todos/                 # Issue tracking (P1-P3 priorities)
-├── docs/                  # Design documents
-└── examples/              # Usage examples
+│       ├── models.py      # ResearchSource, SearchResult
+│       ├── machine.py     # Multi-search state machine (211 lines)
+│       └── prompts.py     # Planning + synthesis prompts
+├── tests/                 # 297 tests (unit, integration, e2e, dashboard)
+├── plans/                 # Design documents and plans
+│   ├── PLAN_TO_SHIP_MCP_BROWSER_USE.md  # Master plan (current state + roadmap)
+│   └── skills-library-150-services.md   # Recipe library scale-up plan
+├── todos/                 # Issue tracking (P1-P3 priorities, 16 issues)
+└── .apr/                  # Automated Plan Reviser config
 ```
+
+**Total**: ~7,000 lines production code, ~4,300 lines test code
 
 ## Key Concepts
 
@@ -53,18 +113,25 @@ mcp-server-browser-use/
 | **Recipe** | Learned API shortcut from browser session. Stored as YAML. Executes in ~2s vs ~60s for full browser automation. NOT the same as "agent skills" (Codex/Claude SKILL.md files). |
 | **Task** | Browser automation job. Tracked in SQLite with status/stage/progress. |
 | **MCP Tool** | Function exposed to AI clients via Model Context Protocol. |
+| **Direct Execution** | Recipe fast path: CDP `fetch()` in browser context (~2s). Inherits cookies/session. |
+| **Hint-Based Execution** | Recipe fallback: browser-use agent with navigation hints (~60s). |
 
 ### Recipes System (Alpha)
 
 Recipes are machine-learned API patterns extracted from browser sessions:
 
-1. **Recording**: CDP captures network traffic during `run_browser_agent`
-2. **Analysis**: LLM identifies the "money request" (API call returning desired data)
-3. **Storage**: Recipe saved as YAML with URL template, headers, body, extract path
-4. **Execution**: Two modes:
-   - **Direct** (~2s): HTTP request via CDP fetch, bypass browser-use
-   - **Hint-based** (~60s): Falls back to browser-use with navigation hints
+```
+LEARN                  ANALYZE                STORE              EXECUTE
 
+Agent runs task       LLM identifies          YAML written       Two paths:
+while CDP recorder    "money request"         to ~/.config/
+captures network      from captured           browser-recipes/   ├─ Direct: CDP fetch() ~2s
+traffic               traffic                                    │  (recipe.request exists)
+                                                                 └─ Hint-based: agent ~60s
+recorder.py ────────> analyzer.py ──────────> store.py ────────>     (fallback)
+```
+
+**Recipe YAML format:**
 ```yaml
 # ~/.config/browser-recipes/example.yaml
 name: example-search
@@ -72,17 +139,21 @@ request:
   url: "https://api.example.com/search?q={query}"
   method: GET
   headers: { "Accept": "application/json" }
-  response_type: json
-  extract_path: "results[*].title"
+  response_type: json           # json | html | text
+  extract_path: "results[*].title"  # JMESPath for JSON
+  html_selectors:               # CSS selectors for HTML
+    title: "h3 a"
+    link: "h3 a@href"          # @attr suffix extracts attribute
+  allowed_domains: ["example.com"]
 parameters:
   - name: query
     required: true
 success_count: 5
 failure_count: 1
-status: verified
+status: verified                # draft | verified | deprecated
 ```
 
-### MCP Tools
+### MCP Tools (10 when recipes enabled, 6 when disabled)
 
 | Tool | Purpose | Duration |
 |------|---------|----------|
@@ -91,6 +162,7 @@ status: verified
 | `recipe_list` | List available recipes | <1s |
 | `recipe_get` | Get recipe details | <1s |
 | `recipe_delete` | Delete a recipe | <1s |
+| `recipe_run_direct` | Direct API execution (~2s) | 1-8s |
 | `health_check` | Server status | <1s |
 | `task_list` | List tasks | <1s |
 | `task_get` | Get task details | <1s |
@@ -103,6 +175,7 @@ status: verified
 | Config | `~/.config/mcp-server-browser-use/config.json` |
 | Tasks DB | `~/.config/mcp-server-browser-use/tasks.db` |
 | Recipes | `~/.config/browser-recipes/*.yaml` |
+| Server PID | `~/.local/state/mcp-server-browser-use/server.json` |
 | Server Log | `~/.local/state/mcp-server-browser-use/server.log` |
 
 ## Development Rules
@@ -114,28 +187,26 @@ status: verified
 - Async/await for I/O
 - Pydantic v2 for all data models
 - No `Any` types, no `@ts-ignore` equivalents
+- Files under 500 lines preferred, split when unwieldy
 
 ### Before Committing
 
 ```bash
-uv run ruff format .   # Format
-uv run ruff check .    # Lint
-uv run pyright         # Type check
-uv run pytest          # Test
+just check    # Runs: format + lint + typecheck + test
 ```
 
-All must pass. Pre-commit hooks enforce this.
+Pre-commit hooks also enforce: validate-pyproject, prettier, ruff, uv-lock-check, pyright, no-commit-to-branch, codespell.
 
 ### Testing
 
 ```bash
-uv run pytest                        # All tests
+uv run pytest                        # All 297 tests
 uv run pytest tests/test_recipes.py  # Specific file
 uv run pytest -k "test_name"         # Single test
 uv run pytest -m "not e2e"           # Skip slow tests
 ```
 
-Markers: `e2e` (real API), `integration` (real browser), `slow`
+Markers: `e2e` (real API + browser), `integration` (real browser), `slow`
 
 ### Common Patterns
 
@@ -148,12 +219,16 @@ settings.recipes.enabled
 # Recipe store
 from mcp_server_browser_use.recipes import RecipeStore, get_default_recipes_dir
 store = RecipeStore(get_default_recipes_dir())
-recipe = await store.load("recipe-name")
+recipe = store.load("recipe-name")
 
 # Task tracking
 from mcp_server_browser_use.observability import get_task_store
 store = get_task_store()
-await store.create_task(task_id, "tool_name", {"args": "here"})
+await store.create_task(task_record)
+
+# LLM provider
+from mcp_server_browser_use.providers import get_llm
+llm = get_llm(provider="openrouter", model="moonshotai/kimi-k2.5", api_key="...")
 ```
 
 ### Package Management
@@ -169,16 +244,17 @@ uv sync                  # Install from lockfile
 ## CLI Reference
 
 ```bash
-# Server
-mcp-server-browser-use server      # Start daemon
-mcp-server-browser-use server -f   # Foreground mode
+# Server lifecycle
+mcp-server-browser-use server      # Start daemon (background)
+mcp-server-browser-use server -f   # Foreground mode (debugging)
 mcp-server-browser-use status      # Check if running
-mcp-server-browser-use stop        # Stop daemon
-mcp-server-browser-use logs -f     # Tail logs
+mcp-server-browser-use stop        # Stop daemon (SIGTERM, then SIGKILL)
+mcp-server-browser-use logs -f     # Tail server log
 
 # Config
 mcp-server-browser-use config view
 mcp-server-browser-use config set -k browser.headless -v false
+mcp-server-browser-use config set -k recipes.enabled -v true
 
 # Recipes
 mcp-server-browser-use recipe list
@@ -189,29 +265,43 @@ mcp-server-browser-use recipe delete <name>
 mcp-server-browser-use tasks
 mcp-server-browser-use task <id>
 mcp-server-browser-use health
+
+# MCP tools (via FastMCP client)
+mcp-server-browser-use tools
+mcp-server-browser-use call <tool> [key=value...]
 ```
 
 ## Security
 
-### Recipes
+### Non-Negotiables
 
-- Sensitive headers (Authorization, Cookie) redacted before storage
-- SSRF protection: private IPs blocked in direct execution
-- URL validation before fetch
-
-### CDP
-
-- CDP URLs restricted to localhost only
-- Never expose CDP port to network
+1. **HTTP transport only.** Stdio blocked with migration message.
+2. **Recipes never store secrets.** Authorization, Cookie, X-Api-Key stripped before YAML storage.
+3. **SSRF protection on all direct execution.** Private IPs blocked, DNS rebinding checked. URL validated twice (before nav AND before fetch).
+4. **CDP restricted to localhost.** Non-localhost CDP URLs rejected at config validation.
+5. **Response bodies capped at 1MB.** Enforced in JS fetch code.
+6. **Task results truncated to 10KB in SQLite.** Prevents DB bloat.
 
 ### API Keys
 
-- Use environment variables: `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
-- Never commit keys
+Use environment variables: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Never commit keys.
 
 ## Supported LLM Providers
 
 anthropic, openai, google, azure_openai, groq, deepseek, cerebras, ollama, bedrock, browser_use, openrouter, vercel
+
+**Default**: `openrouter` with `moonshotai/kimi-k2.5`
+
+## Config Hierarchy
+
+```
+Environment Variables (highest priority)
+  MCP_LLM_PROVIDER, MCP_LLM_MODEL_NAME, MCP_BROWSER_HEADLESS, etc.
+       ▼
+Config File (~/.config/mcp-server-browser-use/config.json)
+       ▼
+Pydantic Defaults (lowest priority)
+```
 
 ## Troubleshooting
 
@@ -233,59 +323,52 @@ anthropic, openai, google, azure_openai, groq, deepseek, cerebras, ollama, bedro
 2. `uv run pytest -v --tb=long` for verbose output
 3. Check port 8383 not in use
 
-## Architecture Summary
-
-```
-MCP Clients (Claude Desktop, CLI)
-        │
-        │ HTTP / SSE
-        ▼
-┌────────────────────────────────┐
-│   FastMCP Server (server.py)   │
-│   - MCP tools                  │
-│   - REST API                   │
-│   - Web dashboard              │
-│   - SSE task streaming         │
-└───────┬────────────────────────┘
-        │
-   ┌────┴────┬──────────┬────────────┐
-   ▼         ▼          ▼            ▼
-Config    LLM       Recipes      Observability
-Pydantic  Factory   CDP+YAML     SQLite+SSE
-          12 provs  ~2s exec     Task tracking
-                        │
-                        ▼
-                  browser-use
-                (Agent + Playwright)
-```
-
 ## Open Issues
 
-Check `todos/` for current issues:
-- P1: Critical (auth)
-- P2: Medium (8 issues)
-- P3: Low (7 issues)
+16 tracked issues in `todos/`:
+- **P1** (1): Auth token not enforced for non-localhost
+- **P2** (8): Atomic writes, name collisions, async I/O, bg task cleanup, allowed_domains, response caps, output validation
+- **P3** (7): JSON-only recorder, missing deps, weak validation, docs mismatch, error handling, header constants, REST direct exec
 
-### Recent Progress (2025-01-09)
+See `plans/PLAN_TO_SHIP_MCP_BROWSER_USE.md` for the full roadmap with phases, ADRs, threat model, and implementation checklist.
 
-**Phase 0 Fixes (Complete):**
-- ✅ URL encoding bug fixed: `runner.py` now uses `request.build_url()` consistently (standalone `build_url()` deprecated)
-- ✅ Response size cap verified: `MAX_RESPONSE_SIZE = 1_000_000` (1MB) already implemented
+## Current Progress (2026-02-09)
 
-**E2E Recipe Learning Tests (tests/test_e2e_recipe_learning.py):**
-- ✅ 10 tests pass, 3 skipped (need API key + browser)
-- Tests cover: GitHub repo search, npm package search, RemoteOK job search
-- Manifest format matches `plans/skills-library-150-services.md` with `example_params`
-- Tests validate: URL encoding consistency, response size cap, manifest format
+### Completed (Phase 0)
+- FastMCP 3.0 beta upgrade (HTTP transport, daemon mode)
+- Stdio-to-HTTP proxy for backward compatibility
+- URL encoding bug fixed (`request.build_url()` canonical)
+- Response size cap (1MB in JS fetch)
+- Skills renamed to Recipes throughout codebase
+- HTML-based recipe extraction with CSS selectors
+- Multi-field extraction with @attr suffix support
+- Selector validation and fallback suggestions
+- E2E recipe learning tests (10 pass, 3 skip)
+- REST API + SSE endpoints for task monitoring
+- Web dashboard (viewer + management)
 
-**Watchtower Integration Blockers:**
-- Transport defaults still inconsistent (see issue atl.1)
-- Pre-existing test failures in dashboard API routes (404 errors)
-- Tool count mismatch in test_mcp_tools.py (expects 9, has 10)
+### In Progress (Phase 1: Recipe Learning)
+- Improving auto-learning success rate (currently 20%, target 60%+)
+- Better analyzer prompts for simple GET APIs
+- Parameter passing fixes
+
+### Planned
+- Phase 1.2: Runner + policy parity hardening (EgressPolicy, transport parity, pooled clients)
+- Phase 1.5: Learning corpus + offline evaluation (measurable success rate)
+- Phase 2: Hardening + contract stabilization (P1/P2 issues, tool surface freeze, OpenAPI)
+- Phase 3: Recipe library scale-up (20+ verified recipes)
+- Phase 4: Polish & release (CI, PyPI, docs)
+
+### Plan Document
+See `PLAN_TO_SHIP_MCP_BROWSER_USE.md` (v2.7) for the comprehensive roadmap with:
+- 8-stage recipe pipeline (record → signals → candidates → analyze → validate → baseline → minimize → verify)
+- 3-tier transport strategy (httpx_public → context_request → in_page_fetch)
+- 25+ threat model entries with mapped tests
+- 15+ non-negotiables and invariants
+- Artifact-based pipeline with deterministic replay
+- 5 quality gates (pre-commit, pre-merge, hostile web, golden+fuzz, perf regression)
 
 ## browser-use Library Reference
-
-See embedded `<browser_use_docs>` section below for upstream library documentation.
 
 <browser_use_docs>
 Browser-Use is an AI agent that autonomously interacts with the web. It takes a user-defined task, navigates web pages using Chromium via CDP, processes HTML, and repeatedly queries a language model to decide the next action.

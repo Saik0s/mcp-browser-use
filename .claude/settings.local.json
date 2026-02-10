@@ -1,5 +1,13 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(./search.js:*)",
+      "WebSearch",
+      "Bash(git clone:*)",
+      "Bash(/Users/igortarasenko/.local/bin/apr run:*)",
+      "Bash(/Users/igortarasenko/.local/bin/apr status:*)",
+      "Bash(/Users/igortarasenko/.local/bin/apr show 1 -w recipe-architecture)"
+    ],
     "additionalDirectories": [
       "/Users/igortarasenko/Projects/browser-use/"
     ]
