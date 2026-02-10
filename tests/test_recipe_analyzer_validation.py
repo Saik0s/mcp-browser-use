@@ -1,3 +1,5 @@
+from collections.abc import Awaitable
+
 import pytest
 
 from mcp_server_browser_use.recipes.analyzer import RecipeAnalyzer
@@ -8,7 +10,7 @@ from mcp_server_browser_use.recipes.store import RecipeStore
 class _DummyLLM:
     name: str = "dummy"
 
-    async def ainvoke(self, messages: list[object], output_format: type[object] | None = None, **kwargs: object) -> object:  # pragma: no cover
+    def ainvoke(self, messages: list[object], output_format: type[object] | None = None, **kwargs: object) -> Awaitable[object]:  # pragma: no cover
         raise AssertionError("Tests should not call the LLM")
 
 
@@ -148,6 +150,7 @@ def test_store_save_accepts_valid_recipe(tmp_path) -> None:
     path = store.save(recipe)
     loaded = store.load("example")
     assert path.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["example.yaml"]
     assert loaded is not None
     assert loaded.request is not None
     assert loaded.request.method == "GET"

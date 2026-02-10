@@ -2,6 +2,7 @@
 
 import logging
 import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +15,40 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 _ALLOWED_RESPONSE_TYPES = {"json", "html", "text"}
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write `content` to `path` atomically (temp + fsync + os.replace)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = Path(f.name)
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+
+        if tmp_path is None:
+            raise RuntimeError("Atomic write failed to create temp file")
+
+        os.replace(tmp_path, path)
+
+    except Exception:
+        # Best-effort cleanup, ignore errors.
+        try:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _validate_recipe_for_storage(recipe: Recipe) -> None:
@@ -155,8 +190,8 @@ class RecipeStore:
 
         data = recipe.to_dict()
 
-        with path.open("w", encoding="utf-8") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        content = yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        _atomic_write_text(path, content)
 
         logger.info(f"Saved recipe: {recipe.name} to {path}")
         return path
