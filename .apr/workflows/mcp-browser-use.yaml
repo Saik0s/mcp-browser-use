@@ -1,0 +1,59 @@
+# APR Workflow Configuration
+#
+# Invariants:
+# - Browser engine only (never API)
+# - Model: GPT-5.2 Pro
+
+name: mcp-browser-use
+description: "MCP Browser Use plan iterations (GPT-5.2 Pro, browser engine only)."
+
+template: |
+  PROJECT: MCP Browser Use (repo: mcp-browser-use)
+
+  Output requirements:
+  - Output must be valid Markdown.
+  - Do not include or repeat any attachment UI artifacts (for example: "attachments-bundle").
+
+  First, read this AGENTS.md (project development guide):
+
+  ```
+  <contents of README will be included by oracle>
+  ```
+
+  ---
+
+  NOW: Carefully review the plan below and propose your best revisions to make it
+  more robust/reliable, more performant, more compelling/useful, and easier to
+  execute as a real Python MCP server project.
+
+  For each proposed change:
+  - Explain the reasoning (why it makes the plan better).
+  - Provide a git-diff style change versus the original plan text.
+
+  Focus areas:
+  1. Architecture gaps or improvements in the recipe learning pipeline
+  2. Missing failure modes in the threat model
+  3. Performance optimization opportunities (especially recipe execution)
+  4. Security hardening (SSRF, credential leakage, CDP security)
+  5. Testing gaps and strategies
+  6. Missing phases or tasks in the implementation plan
+  7. Developer experience and API design
+
+  Plan (PLAN_TO_SHIP_MCP_BROWSER_USE.md):
+
+  ```
+  <contents of spec will be included by oracle>
+  ```
+
+documents:
+  readme: "/Users/igortarasenko/Projects/mcp-browser-use/AGENTS.md"
+  spec: "/Users/igortarasenko/Projects/mcp-browser-use/PLAN_TO_SHIP_MCP_BROWSER_USE.md"
+  implementation: ""
+
+oracle:
+  engine: "browser"
+  model: "gpt-5.2-pro"
+  thinking_time: heavy
+
+rounds:
+  output_dir: ".apr/rounds/mcp-browser-use"

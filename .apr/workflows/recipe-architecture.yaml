@@ -1,0 +1,58 @@
+# APR Workflow: Recipe Architecture Oracle Review
+#
+# Invariants:
+# - Browser engine only (never API)
+# - Model: GPT-5.2 Pro
+# - Focus: recipe system implementation strategy
+
+name: recipe-architecture
+description: "Recipe system architecture review - how to improve auto-learning from 20% to 60%+ success rate."
+
+template: |
+  PROJECT: MCP Browser Use - Recipe System Architecture Review
+
+  Output requirements:
+  - Output must be valid Markdown.
+  - Do not include or repeat any attachment UI artifacts (for example: "attachments-bundle").
+
+  First, read this development guide (AGENTS.md):
+
+  ```
+  <contents of README will be included by oracle>
+  ```
+
+  ---
+
+  NOW: You are reviewing the recipe system architecture for an MCP browser automation server.
+  The full context, current implementation details, reference projects, and specific questions
+  are all contained in the document below.
+
+  Please provide:
+  1. Detailed answers to all 8 specific questions at the bottom
+  2. Your recommended implementation strategy (what to build first, what to skip)
+  3. Any architectural insights or patterns I'm missing
+  4. Concrete code sketches where helpful (Python, not pseudocode)
+
+  For each recommendation:
+  - Explain the reasoning (why)
+  - Provide concrete implementation guidance (how)
+  - Note tradeoffs and risks
+
+  Recipe Architecture Document:
+
+  ```
+  <contents of spec will be included by oracle>
+  ```
+
+documents:
+  readme: "/Users/igortarasenko/Projects/mcp-browser-use/AGENTS.md"
+  spec: "/Users/igortarasenko/Projects/mcp-browser-use/.apr/oracle-prompt-recipe-architecture.md"
+  implementation: ""
+
+oracle:
+  engine: "browser"
+  model: "gpt-5.2-pro"
+  thinking_time: heavy
+
+rounds:
+  output_dir: ".apr/rounds/recipe-architecture"
