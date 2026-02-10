@@ -434,6 +434,8 @@ def serve() -> FastMCP:
                         if html_value:
                             page_html_snippet = str(html_value)[:5000]
                             logger.debug(f"Captured page HTML: {len(page_html_snippet)} chars")
+                except asyncio.CancelledError:
+                    raise
                 except Exception as html_err:
                     logger.warning(f"Could not capture page HTML: {html_err}")
 
@@ -1026,26 +1028,36 @@ To learn new recipes, use run_browser_agent with learn=True."""
         """
         import json
 
-        task_store = get_task_store()
-
-        # Find by prefix match
-        matched_id = None
-        for full_id in _running_tasks:
-            if full_id.startswith(task_id) or full_id == task_id:
-                matched_id = full_id
-                break
-
-        if not matched_id:
+        # Find by prefix match.
+        # Prefer cancelling the "real" task id (UUID) over internal wrapper tasks (suffix "_bg"),
+        # otherwise cancellation may no-op at the TaskStore layer and/or leave the actual work running.
+        matches: list[str] = [full_id for full_id in _running_tasks if full_id == task_id or full_id.startswith(task_id)]
+        if not matches:
             return json.dumps({"success": False, "error": f"Task '{task_id}' not found or not running"})
 
-        # Cancel the asyncio task
-        task = _running_tasks[matched_id]
+        def _cancel_preference(full_id: str) -> tuple[int, int, int]:
+            # Lower tuple sorts first.
+            # 1) exact match
+            # 2) not a background wrapper
+            # 3) shorter id (prefer base uuid over suffixed variants)
+            exact = 0 if full_id == task_id else 1
+            not_bg = 0 if not full_id.endswith("_bg") else 1
+            return (exact, not_bg, len(full_id))
+
+        matched_id = sorted(matches, key=_cancel_preference)[0]
+
+        task = _running_tasks.get(matched_id)
+        if task is None:
+            return json.dumps({"success": False, "error": f"Task '{task_id}' not found or not running"})
+        if task.done():
+            return json.dumps({"success": False, "error": f"Task '{task_id}' not found or not running"})
+
+        # Cancel the asyncio task. The task itself owns updating TaskStore status to CANCELLED
+        # when it observes the cancellation (prevents races with completion/failure updates).
         task.cancel()
-
-        # Update status in store
-        await task_store.update_status(matched_id, TaskStatus.CANCELLED, error="Cancelled by user")
-
-        return json.dumps({"success": True, "task_id": matched_id[:8], "message": "Task cancelled"})
+        # Best-effort: if we cancelled a wrapper task, report the base id prefix for UI consistency.
+        reported_id = matched_id[:-3] if matched_id.endswith("_bg") else matched_id
+        return json.dumps({"success": True, "task_id": reported_id[:8], "message": "Task cancellation requested"})
 
     # --- Web Viewer UI ---
     @server.custom_route(path="/", methods=["GET"])
@@ -1260,20 +1272,13 @@ To learn new recipes, use run_browser_agent with learn=True."""
             bind_task_context(task_id, f"skill_run:{recipe_name}")
             task_logger = get_task_logger()
 
-            try:
-                llm, profile = _get_llm_and_profile()
-            except LLMProviderError as e:
-                logger.error(f"LLM initialization failed: {e}")
-                await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
-                clear_task_context()
-                return
-
-            await task_store.update_status(task_id, TaskStatus.RUNNING)
-            task_logger.info("task_running")
-
             execution_mode = "agent"  # Track how the recipe was executed
 
             try:
+                llm, profile = _get_llm_and_profile()
+                await task_store.update_status(task_id, TaskStatus.RUNNING)
+                task_logger.info("task_running")
+
                 # Load recipe and merge params
                 skill = recipe_store.load(recipe_name) if recipe_store else None
                 merged_params = skill.merge_params(params) if skill else params
@@ -1338,6 +1343,9 @@ To learn new recipes, use run_browser_agent with learn=True."""
                         finally:
                             await browser_session.stop()
 
+                    except asyncio.CancelledError:
+                        # Cancellation should stop execution immediately, not be treated as a direct-exec failure.
+                        raise
                     except Exception as e:
                         logger.error(f"Direct execution error: {e}")
                         task_logger.info("direct_execution_error", recipe=recipe_name, error=str(e))
@@ -1368,6 +1376,18 @@ To learn new recipes, use run_browser_agent with learn=True."""
 
                 await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final)
                 task_logger.info("task_completed", result_length=len(final), execution_mode=execution_mode)
+
+            except LLMProviderError as e:
+                logger.error(f"LLM initialization failed: {e}")
+                await asyncio.shield(task_store.update_status(task_id, TaskStatus.FAILED, error=str(e)))
+                return
+
+            except asyncio.CancelledError:
+                if recipe_store:
+                    recipe_store.record_usage(recipe_name, success=False)
+                await asyncio.shield(task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user"))
+                task_logger.info("task_cancelled", execution_mode=execution_mode)
+                raise
 
             except Exception as e:
                 if recipe_store:
@@ -1445,16 +1465,9 @@ To learn new recipes, use run_browser_agent with learn=True."""
 
             try:
                 llm, profile = _get_llm_and_profile()
-            except LLMProviderError as e:
-                logger.error(f"LLM initialization failed: {e}")
-                await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
-                clear_task_context()
-                return
+                await task_store.update_status(task_id, TaskStatus.RUNNING)
+                task_logger.info("task_running")
 
-            await task_store.update_status(task_id, TaskStatus.RUNNING)
-            task_logger.info("task_running")
-
-            try:
                 # Inject learning mode instructions
                 augmented_task = task_description
                 if recipe_executor:
@@ -1502,6 +1515,8 @@ To learn new recipes, use run_browser_agent with learn=True."""
                         if html_value:
                             page_html_snippet = str(html_value)[:5000]
                             logger.debug(f"Captured page HTML: {len(page_html_snippet)} chars")
+                except asyncio.CancelledError:
+                    raise
                 except Exception as html_err:
                     logger.warning(f"Could not capture page HTML: {html_err}")
 
@@ -1528,6 +1543,8 @@ To learn new recipes, use run_browser_agent with learn=True."""
                         else:
                             recipe_extraction_result = "\n\n[RECIPE NOT LEARNED] Could not extract API from execution"
 
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as e:
                         logger.error(f"Recipe extraction failed: {e}")
                         recipe_extraction_result = f"\n\n[RECIPE EXTRACTION ERROR] {e}"
@@ -1538,6 +1555,16 @@ To learn new recipes, use run_browser_agent with learn=True."""
                 final_result = final + recipe_extraction_result
                 await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final_result)
                 task_logger.info("task_completed", result_length=len(final_result))
+
+            except LLMProviderError as e:
+                logger.error(f"LLM initialization failed: {e}")
+                await asyncio.shield(task_store.update_status(task_id, TaskStatus.FAILED, error=str(e)))
+                return
+
+            except asyncio.CancelledError:
+                await asyncio.shield(task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user"))
+                task_logger.info("task_cancelled")
+                raise
 
             except Exception as e:
                 await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
