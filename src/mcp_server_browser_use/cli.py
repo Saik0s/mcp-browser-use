@@ -24,7 +24,17 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .config import APP_NAME, CONFIG_FILE, get_default_results_dir, load_config_file, save_config_file, settings
+from .config import (
+    APP_NAME,
+    CONFIG_FILE,
+    ConfigFileError,
+    JsonObject,
+    get_default_results_dir,
+    get_settings,
+    get_settings_env_only,
+    load_config_file,
+    save_config_file,
+)
 from .recipes import RecipeStore
 
 
@@ -97,8 +107,13 @@ def _ensure_server_running() -> tuple[str, int]:
         return info["host"], info["port"]
 
     # Server not running, start it
-    h = settings.server.host
-    p = settings.server.port
+    try:
+        s = get_settings()
+    except ConfigFileError as e:
+        raise RuntimeError(str(e)) from e
+
+    h = s.server.host
+    p = s.server.port
 
     cmd = [
         sys.executable,
@@ -175,8 +190,14 @@ def server(
     """Start the HTTP MCP server as a background daemon."""
     import subprocess
 
-    h = host or settings.server.host
-    p = port or settings.server.port
+    try:
+        s = get_settings()
+    except ConfigFileError as e:
+        console.print(f"[red]Config error:[/red] {e}")
+        raise typer.Exit(1)
+
+    h = host or s.server.host
+    p = port or s.server.port
 
     # Check if already running
     info = _read_server_info()
@@ -191,8 +212,8 @@ def server(
         from .server import server_instance
 
         console.print("[bold green]Starting HTTP MCP server (foreground)[/bold green]")
-        console.print(f"  Provider: {settings.llm.provider}")
-        console.print(f"  Model: {settings.llm.model_name}")
+        console.print(f"  Provider: {s.llm.provider}")
+        console.print(f"  Model: {s.llm.model_name}")
         console.print(f"  URL: http://{h}:{p}/mcp")
         _write_server_info(os.getpid(), h, p, transport)
         try:
@@ -232,8 +253,8 @@ def server(
 
     console.print("[bold green]Started HTTP MCP server (background)[/bold green]")
     console.print(f"  PID: {proc.pid}")
-    console.print(f"  Provider: {settings.llm.provider}")
-    console.print(f"  Model: {settings.llm.model_name}")
+    console.print(f"  Provider: {s.llm.provider}")
+    console.print(f"  Model: {s.llm.model_name}")
     console.print(f"  URL: http://{h}:{p}/mcp")
     console.print(f"  Log: {LOG_FILE}")
     console.print(f"  Info: {SERVER_INFO_FILE}")
@@ -465,7 +486,12 @@ def install() -> None:
     data = json.loads(config_path.read_text())
     mcp_servers = data.get("mcpServers", {})
 
-    url = f"http://{settings.server.host}:{settings.server.port}/mcp"
+    try:
+        s = get_settings()
+    except ConfigFileError:
+        s = get_settings_env_only()
+
+    url = f"http://{s.server.host}:{s.server.port}/mcp"
 
     server_config = {
         "command": "npx",
@@ -495,29 +521,48 @@ def config_cmd(
         return
 
     if action == "view":
+        try:
+            s = get_settings()
+            config_error: str | None = None
+        except ConfigFileError as e:
+            # "view" must be usable to diagnose and repair a broken config file.
+            s = get_settings_env_only()
+            config_error = str(e)
+
         table = Table(title="Current Configuration")
         table.add_column("Setting", style="cyan")
         table.add_column("Value", style="green")
         table.add_column("JSON Key", style="dim")
 
         table.add_row("Config File", str(CONFIG_FILE), "-")
-        table.add_row("Results Dir", str(settings.server.results_dir or get_default_results_dir()), "server.results_dir")
-        table.add_row("LLM Provider", settings.llm.provider, "llm.provider")
-        table.add_row("LLM Model", settings.llm.model_name, "llm.model_name")
-        table.add_row("LLM Base URL", settings.llm.base_url or "(default)", "llm.base_url")
-        table.add_row("Browser Headless", str(settings.browser.headless), "browser.headless")
-        table.add_row("Browser Proxy", settings.browser.proxy_server or "(none)", "browser.proxy_server")
-        table.add_row("Max Steps", str(settings.agent.max_steps), "agent.max_steps")
-        table.add_row("Max Searches", str(settings.research.max_searches), "research.max_searches")
-        table.add_row("Server Transport", settings.server.transport, "server.transport")
-        table.add_row("Server Host", settings.server.host, "server.host")
-        table.add_row("Server Port", str(settings.server.port), "server.port")
+        if config_error:
+            table.add_row("Config Status", f"[red]invalid[/red] ({config_error})", "-")
+        else:
+            table.add_row("Config Status", "[green]ok[/green]", "-")
+
+        table.add_row("Results Dir", str(s.server.results_dir or get_default_results_dir()), "server.results_dir")
+        table.add_row("LLM Provider", s.llm.provider, "llm.provider")
+        table.add_row("LLM Model", s.llm.model_name, "llm.model_name")
+        table.add_row("LLM Base URL", s.llm.base_url or "(default)", "llm.base_url")
+        table.add_row("Browser Headless", str(s.browser.headless), "browser.headless")
+        table.add_row("Browser Proxy", s.browser.proxy_server or "(none)", "browser.proxy_server")
+        table.add_row("Max Steps", str(s.agent.max_steps), "agent.max_steps")
+        table.add_row("Max Searches", str(s.research.max_searches), "research.max_searches")
+        table.add_row("Server Transport", s.server.transport, "server.transport")
+        table.add_row("Server Host", s.server.host, "server.host")
+        table.add_row("Server Port", str(s.server.port), "server.port")
 
         console.print(table)
         return
 
     if action == "save":
-        path = settings.save()
+        try:
+            s = get_settings()
+        except ConfigFileError:
+            # Broken JSON should not block "config save" repair.
+            s = get_settings_env_only()
+
+        path = s.save()
         console.print(f"[green]Configuration saved to {path}[/green]")
         return
 
@@ -527,13 +572,23 @@ def config_cmd(
             raise typer.Exit(1)
 
         # Load current file config
-        current = load_config_file()
+        try:
+            current_obj: JsonObject = load_config_file()
+        except ConfigFileError as e:
+            console.print(f"[yellow]Config file unreadable, overwriting:[/yellow] {e}")
+            current_obj = {}
 
         # Parse key path
         parts = key.split(".")
-        target = current
+        target: JsonObject = current_obj
         for part in parts[:-1]:
-            target = target.setdefault(part, {})
+            child = target.get(part)
+            if isinstance(child, dict):
+                target = child
+                continue
+            new_child: JsonObject = {}
+            target[part] = new_child
+            target = new_child
 
         # Parse value type
         if value.lower() == "true":
@@ -546,7 +601,7 @@ def config_cmd(
             parsed_value = value
 
         target[parts[-1]] = parsed_value
-        save_config_file(current)
+        save_config_file(current_obj)
         console.print(f"[green]Set {key} = {parsed_value}[/green]")
         console.print(f"[dim]Saved to {CONFIG_FILE}[/dim]")
         return
@@ -563,7 +618,12 @@ app.add_typer(recipe_app, name="recipe")
 @recipe_app.command("list")
 def recipe_list() -> None:
     """List all available recipes."""
-    store = RecipeStore(directory=settings.recipes.directory)
+    try:
+        s = get_settings()
+    except ConfigFileError:
+        s = get_settings_env_only()
+
+    store = RecipeStore(directory=s.recipes.directory)
     recipes = store.list_all()
 
     if not recipes:
@@ -593,7 +653,12 @@ def recipe_get(
     name: str = typer.Argument(..., help="Recipe name"),
 ) -> None:
     """Show full details of a recipe."""
-    store = RecipeStore(directory=settings.recipes.directory)
+    try:
+        s = get_settings()
+    except ConfigFileError:
+        s = get_settings_env_only()
+
+    store = RecipeStore(directory=s.recipes.directory)
     recipe = store.load(name)
 
     if not recipe:
@@ -610,7 +675,12 @@ def recipe_delete(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Delete a recipe."""
-    store = RecipeStore(directory=settings.recipes.directory)
+    try:
+        s = get_settings()
+    except ConfigFileError:
+        s = get_settings_env_only()
+
+    store = RecipeStore(directory=s.recipes.directory)
 
     if not store.exists(name):
         console.print(f"[red]Recipe not found: {name}[/red]")
