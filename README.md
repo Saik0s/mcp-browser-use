@@ -71,9 +71,10 @@ CURRENT STATE
   In Progress: Security hardening, recipe validation
   Not Started: Phase 3 Production, Phase 4 Scale
 
-  ⚠️  16 open issues in todos/ (1 P1, 8 P2, 7 P3)
+  ⚠️  todos/: 16 open issues (1 P1, 8 P2, 7 P3)
+  ⚠️  beads: 99 open, 23 ready, 27 blocked (br stats)
 
-TESTS: 275 tests across 11 files (unit/integration/e2e/dashboard)
+TESTS: 373 tests collected (pytest --collect-only)
 ═══════════════════════════════════════════════════════════════════════════════
 ```
 

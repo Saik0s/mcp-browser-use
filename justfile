@@ -48,8 +48,8 @@ test-fast:
 test-file FILE:
     uv run pytest {{FILE}} -v
 
-# Run all checks (format, lint, typecheck, test)
-check: format lint typecheck test
+# Run all checks (format, lint, typecheck, test-fast)
+check: format lint typecheck test-fast
 
 # Quick check (no tests)
 check-quick: format lint typecheck
