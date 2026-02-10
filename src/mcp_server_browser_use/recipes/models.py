@@ -245,8 +245,19 @@ class RecipeRequest:
     # For HTML responses - CSS selectors
     html_selectors: dict[str, str] | None = None  # {"items": ".result-item", "title": "h3 a", ...}
 
-    # Security: Domain allowlist (empty = allow all for backwards compatibility)
+    # Security: Domain allowlist.
+    #
+    # Default to the request URL hostname for safe-by-default learned recipes.
     allowed_domains: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.allowed_domains:
+            return
+
+        hostname = urlparse(self.url).hostname
+        if hostname:
+            # urlparse().hostname is already lowercase and strips any port.
+            self.allowed_domains = [hostname]
 
     def build_url(self, params: dict[str, Any]) -> str:
         """Build URL by substituting parameter placeholders with proper encoding.

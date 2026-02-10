@@ -102,19 +102,19 @@ def test_is_ip_blocked_private() -> None:
     """Test private IPs are blocked."""
     import ipaddress
 
-    assert _is_ip_blocked(ipaddress.ip_address("127.0.0.1")) is True
-    assert _is_ip_blocked(ipaddress.ip_address("192.168.1.1")) is True
-    assert _is_ip_blocked(ipaddress.ip_address("10.0.0.1")) is True
-    assert _is_ip_blocked(ipaddress.ip_address("::1")) is True
+    assert _is_ip_blocked(ipaddress.ip_address("127.0.0.1"))
+    assert _is_ip_blocked(ipaddress.ip_address("192.168.1.1"))
+    assert _is_ip_blocked(ipaddress.ip_address("10.0.0.1"))
+    assert _is_ip_blocked(ipaddress.ip_address("::1"))
 
 
 def test_is_ip_blocked_public() -> None:
     """Test public IPs are not blocked."""
     import ipaddress
 
-    assert _is_ip_blocked(ipaddress.ip_address("1.1.1.1")) is False
-    assert _is_ip_blocked(ipaddress.ip_address("8.8.8.8")) is False
-    assert _is_ip_blocked(ipaddress.ip_address("93.184.216.34")) is False  # example.com
+    assert not _is_ip_blocked(ipaddress.ip_address("1.1.1.1"))
+    assert not _is_ip_blocked(ipaddress.ip_address("8.8.8.8"))
+    assert not _is_ip_blocked(ipaddress.ip_address("93.184.216.34"))  # example.com
 
 
 # --- Header Stripping Tests ---
@@ -231,17 +231,17 @@ def test_strip_sensitive_headers_allowlist_override() -> None:
 def test_is_sensitive_header_name_respects_allowlist() -> None:
     """Sanity check the predicate and allowlist are aligned."""
     assert "x-csrf-protection" in PUBLIC_HEADER_ALLOWLIST
-    assert is_sensitive_header_name("X-CSRF-Protection") is False
-    assert is_sensitive_header_name("X-CSRF-Token") is True
+    assert not is_sensitive_header_name("X-CSRF-Protection")
+    assert is_sensitive_header_name("X-CSRF-Token")
 
 
 def test_is_sensitive_header_name_avoids_false_positives() -> None:
     """Regression: avoid naive substring matches like 'auth' in ':authority' or 'author'."""
-    assert is_sensitive_header_name(":authority") is False
-    assert is_sensitive_header_name("Author") is False
-    assert is_sensitive_header_name("X-Author") is False
-    assert is_sensitive_header_name("Authorization") is True
-    assert is_sensitive_header_name("X-Auth-Token") is True
+    assert not is_sensitive_header_name(":authority")
+    assert not is_sensitive_header_name("Author")
+    assert not is_sensitive_header_name("X-Author")
+    assert is_sensitive_header_name("Authorization")
+    assert is_sensitive_header_name("X-Auth-Token")
 
 
 def test_recorder_redacts_sensitive_headers_by_pattern() -> None:
@@ -431,6 +431,25 @@ def test_recipe_allowed_domains_serialization() -> None:
     restored = Recipe.from_dict(data)
     assert restored.request is not None
     assert restored.request.allowed_domains == ["example.com", "api.example.com"]
+
+
+def test_recipe_allowed_domains_defaults_on_load() -> None:
+    """Regression: if stored request.allowed_domains is empty/missing, default to request URL hostname."""
+    data = {
+        "name": "test",
+        "description": "test",
+        "original_task": "test",
+        "request": {
+            "url": "https://api.example.com/data",
+            "method": "GET",
+            "headers": {"Accept": "application/json"},
+            "allowed_domains": [],
+        },
+    }
+
+    restored = Recipe.from_dict(data)
+    assert restored.request is not None
+    assert restored.request.allowed_domains == ["api.example.com"]
 
 
 def test_sensitive_headers_constant() -> None:

@@ -81,6 +81,10 @@ def mock_browser_session() -> MagicMock:
 class TestRecipeRequest:
     """Tests for RecipeRequest model."""
 
+    def test_allowed_domains_defaults_to_hostname(self):
+        request = RecipeRequest(url="https://api.example.com/search?q={query}")
+        assert request.allowed_domains == ["api.example.com"]
+
     def test_build_url_substitutes_params(self):
         request = RecipeRequest(url="https://api.example.com/search?q={query}&limit={limit}")
         result = request.build_url({"query": "test", "limit": "10"})
@@ -157,10 +161,10 @@ class TestRecipe:
     """Tests for Recipe model."""
 
     def test_supports_direct_execution_true_with_request(self, recipe_with_direct_execution: Recipe):
-        assert recipe_with_direct_execution.supports_direct_execution is True
+        assert recipe_with_direct_execution.supports_direct_execution
 
     def test_supports_direct_execution_false_without_request(self, recipe_without_direct_execution: Recipe):
-        assert recipe_without_direct_execution.supports_direct_execution is False
+        assert not recipe_without_direct_execution.supports_direct_execution
 
 
 # --- RecipeRunner Tests ---
@@ -180,7 +184,7 @@ class TestRecipeRunner:
         mock_browser_session: MagicMock,
     ):
         result = await runner.run(recipe_without_direct_execution, {}, mock_browser_session)
-        assert result.success is False
+        assert not result.success
         assert result.error is not None
         assert "no request config" in result.error.lower()
 
@@ -287,9 +291,9 @@ class TestRecipeRunner:
 
         result = await runner.run(recipe_with_direct_execution, {"query": "test"}, mock_browser_session)
 
-        assert result.success is True
+        assert result.success
         assert result.status_code == 200
-        # extract_path is "results[*].name"
+        # extract_path: "results[*].name"
         assert result.data == ["item1", "item2"]
 
     async def test_run_handles_http_error(
@@ -313,7 +317,7 @@ class TestRecipeRunner:
 
         result = await runner.run(recipe_with_direct_execution, {"query": "test"}, mock_browser_session)
 
-        assert result.success is False
+        assert not result.success
         assert result.status_code == 500
         assert result.error is not None
         assert "HTTP 500" in result.error
@@ -339,8 +343,8 @@ class TestRecipeRunner:
 
         result = await runner.run(recipe_with_direct_execution, {"query": "test"}, mock_browser_session)
 
-        assert result.success is False
-        assert result.auth_recovery_triggered is True
+        assert not result.success
+        assert result.auth_recovery_triggered
         assert result.error is not None
         assert "recovery page" in result.error.lower()
         assert "https://example.com/login" in result.error
