@@ -8,8 +8,10 @@ Analyzes recorded sessions to create replayable recipes:
 import json
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .models import AuthRecovery, FallbackConfig, MoneyRequest, NavigationStep, Recipe, RecipeHints, RecipeParameter, RecipeRequest, SessionRecording
 from .prompts import ANALYSIS_SYSTEM_PROMPT, get_analysis_prompt
@@ -18,6 +20,69 @@ if TYPE_CHECKING:
     from browser_use.llm.base import BaseChatModel
 
 logger = logging.getLogger(__name__)
+
+_PLACEHOLDER_PATTERN = re.compile(r"\{([^}]+)\}")
+_ResponseType = Literal["json", "html", "text"]
+
+
+class _AnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    url: str = Field(min_length=1)
+    method: str = "GET"
+    headers: dict[str, str] = Field(default_factory=dict)
+    body_template: str | None = None
+    response_type: str = "json"
+    extract_path: str | None = None
+    html_selectors: dict[str, str] | None = None
+
+
+class _AnalysisParameter(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    name: str = Field(min_length=1)
+    source: str = ""
+    required: bool = False
+    default: str | None = None
+    description: str = ""
+
+
+class _AnalysisAuthRecovery(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    trigger_on_status: list[int] = Field(default_factory=lambda: [401, 403])
+    trigger_on_body: str | None = None
+    recovery_page: str = Field(min_length=1)
+    success_indicator: str | None = None
+
+
+class _AnalysisOutput(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    success: bool = True
+    reason: str = ""
+    recipe_type: str = "api"
+    request: _AnalysisRequest | None = None
+    parameters: list[_AnalysisParameter] = Field(default_factory=list)
+    auth_recovery: _AnalysisAuthRecovery | None = None
+    recipe_name_suggestion: str = ""
+    recipe_description: str = ""
+
+
+def _validate_placeholder_name(name: str) -> bool:
+    # Valid Python identifier: starts with letter/underscore, contains alphanumeric/underscore.
+    return bool(re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", name))
+
+
+def _extract_placeholders(text: str) -> list[str]:
+    return _PLACEHOLDER_PATTERN.findall(text)
+
+
+def _normalize_response_type(value: str) -> _ResponseType:
+    normalized = value.lower().strip()
+    if normalized in ("json", "html", "text"):
+        return normalized
+    raise ValueError(f"Invalid response_type: {value}. Must be one of ['html', 'json', 'text']")
 
 
 class RecipeAnalyzer:
@@ -96,14 +161,14 @@ class RecipeAnalyzer:
                 logger.info(f"Recipe analysis failed: {reason}")
                 return None
 
-            # Validate LLM output before building recipe
-            is_valid, validation_error = self._validate_analysis_output(result)
-            if not is_valid:
-                logger.warning(f"LLM output validation failed: {validation_error}")
+            try:
+                analysis = self._validate_and_normalize_analysis_output(result)
+            except ValueError as ve:
+                logger.warning(f"LLM output validation failed: {ve}")
                 return None
 
             # Build recipe from analysis
-            recipe = self._build_recipe(result, recording)
+            recipe = self._build_recipe(analysis, recording)
             return recipe
 
         except Exception as e:
@@ -133,76 +198,89 @@ class RecipeAnalyzer:
                 end = content.find("```", start)
                 content = content[start:end].strip()
 
-            return json.loads(content)
+            try:
+                parsed = json.JSONDecoder().decode(content)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse analysis response: {e}")
+                return None
 
-        except json.JSONDecodeError as e:
+            return parsed
+
+        except Exception as e:
             logger.warning(f"Failed to parse analysis response: {e}")
             return None
 
     def _validate_analysis_output(self, analysis: dict) -> tuple[bool, str]:
-        """Validate LLM analysis output before building recipe.
+        """Backward-compatible validator wrapper.
 
-        Args:
-            analysis: Parsed analysis response from LLM
-
-        Returns:
-            Tuple of (is_valid, error_message). If valid, error_message is empty.
+        Older tests/callers expect a (bool, error) result. Newer code uses
+        `_validate_and_normalize_analysis_output()` which raises ValueError on invalid output.
         """
-        # If analysis explicitly failed, that's valid (we return None in analyze())
+        # If analysis explicitly failed, that's "valid" in the sense that analyze() returns None.
         if not analysis.get("success", True):
             return True, ""
 
-        # Validate request section
-        request_data = analysis.get("request")
-        if not request_data or not isinstance(request_data, dict):
-            return False, "Missing or invalid 'request' section"
-
-        # Validate URL exists and has valid scheme
-        url = request_data.get("url")
-        if not url or not isinstance(url, str):
-            return False, "Missing or invalid 'url' in request"
-
-        url_lower = url.lower()
-        if not url_lower.startswith("http://") and not url_lower.startswith("https://"):
-            return False, f"URL must start with http:// or https://, got: {url[:50]}"
-
-        # Validate URL parameter placeholders are valid identifiers
-        # Matches {param_name} patterns
-        placeholder_pattern = re.compile(r"\{([^}]+)\}")
-        placeholders = placeholder_pattern.findall(url)
-        for placeholder in placeholders:
-            # Valid Python identifier: starts with letter/underscore, contains alphanumeric/underscore
-            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", placeholder):
-                return False, f"Invalid URL parameter placeholder: {{{placeholder}}}. Must be valid identifier."
-
-        # Validate HTTP method
-        method = request_data.get("method", "GET")
-        valid_methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}
-        if not isinstance(method, str) or method.upper() not in valid_methods:
-            return False, f"Invalid HTTP method: {method}. Must be one of {valid_methods}"
-
-        # Validate response_type
-        response_type = request_data.get("response_type", "json")
-        valid_response_types = {"json", "html", "text"}
-        if not isinstance(response_type, str) or response_type.lower() not in valid_response_types:
-            return False, f"Invalid response_type: {response_type}. Must be one of {valid_response_types}"
-
-        # Validate parameters list
-        parameters = analysis.get("parameters", [])
-        if parameters and isinstance(parameters, list):
-            for i, param in enumerate(parameters):
-                if not isinstance(param, dict):
-                    return False, f"Parameter at index {i} must be a dict"
-                param_name = param.get("name")
-                if not param_name or not isinstance(param_name, str) or not param_name.strip():
-                    return False, f"Parameter at index {i} has missing or empty 'name'"
-                # Validate param name is valid identifier
-                if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", param_name):
-                    return False, f"Parameter name '{param_name}' is not a valid identifier"
+        try:
+            self._validate_and_normalize_analysis_output(analysis)
+        except ValueError as ve:
+            return False, str(ve)
 
         return True, ""
 
-    def _build_recipe(self, analysis: dict, recording: SessionRecording) -> Recipe:
+    def _validate_and_normalize_analysis_output(self, raw: dict) -> _AnalysisOutput:
+        """Validate analyzer output before building or saving a recipe.
+
+        Analyzer output is untrusted input. We validate and normalize it up-front
+        so broken outputs do not get serialized into YAML.
+        """
+        try:
+            analysis = _AnalysisOutput.model_validate(raw)
+        except ValidationError as ve:
+            raise ValueError(str(ve)) from ve
+
+        if not analysis.success:
+            raise ValueError(f"Analysis marked as failure: {analysis.reason or 'Unknown'}")
+
+        if not analysis.request:
+            raise ValueError("Missing or invalid 'request' section")
+
+        # Normalize for downstream code.
+        analysis.request.method = analysis.request.method.upper().strip()
+        analysis.request.response_type = analysis.request.response_type.lower().strip()
+
+        valid_methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+        if analysis.request.method not in valid_methods:
+            raise ValueError(f"Invalid HTTP method: {analysis.request.method}. Must be one of {sorted(valid_methods)}")
+
+        _normalize_response_type(analysis.request.response_type)
+
+        url_lower = analysis.request.url.lower()
+        if not url_lower.startswith("http://") and not url_lower.startswith("https://"):
+            raise ValueError(f"URL must start with http:// or https://, got: {analysis.request.url[:50]}")
+
+        parsed = urlparse(analysis.request.url)
+        if not parsed.hostname:
+            raise ValueError("Request URL must include a hostname")
+
+        for placeholder in _extract_placeholders(analysis.request.url):
+            if not _validate_placeholder_name(placeholder):
+                raise ValueError(f"Invalid URL parameter placeholder: {{{placeholder}}}. Must be valid identifier.")
+
+        if analysis.request.body_template is not None:
+            for placeholder in _extract_placeholders(analysis.request.body_template):
+                if not _validate_placeholder_name(placeholder):
+                    raise ValueError(f"Invalid body_template placeholder: {{{placeholder}}}. Must be valid identifier.")
+
+        if analysis.request.response_type == "html" and not analysis.request.html_selectors:
+            raise ValueError("HTML recipes must include non-empty html_selectors")
+
+        for p in analysis.parameters:
+            if not _validate_placeholder_name(p.name):
+                raise ValueError(f"Parameter name '{p.name}' is not a valid identifier")
+
+        return analysis
+
+    def _build_recipe(self, analysis: _AnalysisOutput, recording: SessionRecording) -> Recipe:
         """Build a Recipe object from analysis results.
 
         Args:
@@ -213,51 +291,51 @@ class RecipeAnalyzer:
             Recipe object with direct execution support if possible
         """
         # Build RecipeRequest for direct execution
-        request_data = analysis.get("request", {})
+        request_data = analysis.request
         recipe_request = None
-        if request_data.get("url"):
-            url = request_data.get("url", "")
+        if request_data and request_data.url:
+            url = request_data.url
             host = urlparse(url).hostname
             allowed = [host] if host else []
             recipe_request = RecipeRequest(
                 url=url,
-                method=request_data.get("method", "GET"),
-                headers=request_data.get("headers", {}),
-                body_template=request_data.get("body_template"),
-                response_type=request_data.get("response_type", "json"),
-                extract_path=request_data.get("extract_path"),
-                html_selectors=request_data.get("html_selectors"),
+                method=request_data.method,
+                headers=request_data.headers,
+                body_template=request_data.body_template,
+                response_type=_normalize_response_type(request_data.response_type),
+                extract_path=request_data.extract_path,
+                html_selectors=request_data.html_selectors,
                 allowed_domains=allowed,
             )
             logger.info(f"Built RecipeRequest for direct execution: {recipe_request.url}")
 
         # NEW: Build AuthRecovery if provided
-        auth_data = analysis.get("auth_recovery") or {}
+        auth_data = analysis.auth_recovery
         auth_recovery = None
-        if isinstance(auth_data, dict) and auth_data.get("recovery_page"):
+        if auth_data and auth_data.recovery_page:
             auth_recovery = AuthRecovery(
-                trigger_on_status=auth_data.get("trigger_on_status", [401, 403]),
-                trigger_on_body=auth_data.get("trigger_on_body"),
-                recovery_page=auth_data.get("recovery_page", ""),
-                success_indicator=auth_data.get("success_indicator"),
+                trigger_on_status=auth_data.trigger_on_status,
+                trigger_on_body=auth_data.trigger_on_body,
+                recovery_page=auth_data.recovery_page,
+                success_indicator=auth_data.success_indicator,
             )
 
         # Build parameters from top-level or nested in request
-        parameters_data = analysis.get("parameters") or []
+        parameters_data = analysis.parameters
         parameters = []
         for p in parameters_data:
-            if p and isinstance(p, dict):
-                parameters.append(
-                    RecipeParameter(
-                        name=p.get("name", ""),
-                        source=p.get("source", "query"),
-                        required=p.get("required", False),
-                        default=p.get("default"),
-                    )
+            parameters.append(
+                RecipeParameter(
+                    name=p.name,
+                    source=p.source or "query",
+                    required=p.required,
+                    default=p.default,
+                    description=p.description,
                 )
+            )
 
         # LEGACY: Build money_request for backward compatibility
-        money_request_data = analysis.get("money_request", {})
+        money_request_data = {}  # Analyzer prompt no longer emits this field.
         money_request = None
         if money_request_data.get("endpoint"):
             money_request = MoneyRequest(
@@ -269,7 +347,7 @@ class RecipeAnalyzer:
             )
 
         # LEGACY: Build navigation steps
-        navigation_data = analysis.get("navigation_steps") or []
+        navigation_data: list[dict] = []
         navigation = []
         for n in navigation_data:
             if n and isinstance(n, dict):
@@ -279,14 +357,14 @@ class RecipeAnalyzer:
         hints = RecipeHints(navigation=navigation, money_request=money_request)
 
         # Generate recipe name if not provided
-        recipe_name = analysis.get("recipe_name_suggestion", "")
+        recipe_name = analysis.recipe_name_suggestion
         if not recipe_name:
             # Generate from task
             recipe_name = recording.task[:30].lower().replace(" ", "-").replace("'", "").replace('"', "")
 
         return Recipe(
             name=recipe_name,
-            description=analysis.get("recipe_description", recording.task),
+            description=analysis.recipe_description or recording.task,
             original_task=recording.task,
             request=recipe_request,  # Direct execution
             auth_recovery=auth_recovery,  # Auth recovery

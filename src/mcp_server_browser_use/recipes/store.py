@@ -4,12 +4,74 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
 from .models import Recipe
 
 logger = logging.getLogger(__name__)
+
+_ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+_ALLOWED_RESPONSE_TYPES = {"json", "html", "text"}
+
+
+def _validate_recipe_for_storage(recipe: Recipe) -> None:
+    if not recipe.name or not recipe.name.strip():
+        raise ValueError("Recipe.name must be non-empty")
+
+    if recipe.request is None:
+        return
+
+    req = recipe.request
+    if not isinstance(req.url, str) or not req.url.strip():
+        raise ValueError("Recipe.request.url must be a non-empty string")
+
+    parsed = urlparse(req.url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Recipe.request.url must be http(s), got scheme={parsed.scheme!r}")
+    if not parsed.hostname:
+        raise ValueError("Recipe.request.url must include a hostname")
+
+    if not isinstance(req.method, str):
+        raise ValueError("Recipe.request.method must be a string")
+    req.method = req.method.upper().strip()
+    if req.method not in _ALLOWED_METHODS:
+        raise ValueError(f"Recipe.request.method must be one of {sorted(_ALLOWED_METHODS)}, got {req.method!r}")
+
+    if not isinstance(req.response_type, str):
+        raise ValueError("Recipe.request.response_type must be a string")
+    normalized = req.response_type.lower().strip()
+    if normalized not in _ALLOWED_RESPONSE_TYPES:
+        raise ValueError(f"Recipe.request.response_type must be one of {sorted(_ALLOWED_RESPONSE_TYPES)}, got {normalized!r}")
+    if normalized == "json":
+        req.response_type = "json"
+    elif normalized == "html":
+        req.response_type = "html"
+    else:
+        req.response_type = "text"
+
+    if req.headers is None or not isinstance(req.headers, dict):
+        raise ValueError("Recipe.request.headers must be a dict")
+    for k, v in req.headers.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            raise ValueError("Recipe.request.headers must be dict[str, str]")
+
+    if req.body_template is not None and not isinstance(req.body_template, str):
+        raise ValueError("Recipe.request.body_template must be a string or None")
+
+    if req.extract_path is not None and not isinstance(req.extract_path, str):
+        raise ValueError("Recipe.request.extract_path must be a string or None")
+
+    if req.html_selectors is not None:
+        if not isinstance(req.html_selectors, dict):
+            raise ValueError("Recipe.request.html_selectors must be a dict or None")
+        for k, v in req.html_selectors.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                raise ValueError("Recipe.request.html_selectors must be dict[str, str]")
+
+    if not isinstance(req.allowed_domains, list) or any(not isinstance(d, str) for d in req.allowed_domains):
+        raise ValueError("Recipe.request.allowed_domains must be list[str]")
 
 
 def get_default_recipes_dir() -> Path:
@@ -88,6 +150,7 @@ class RecipeStore:
         Returns:
             Path to saved file
         """
+        _validate_recipe_for_storage(recipe)
         path = self._recipe_path(recipe.name)
 
         data = recipe.to_dict()
