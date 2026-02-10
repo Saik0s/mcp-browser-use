@@ -51,10 +51,6 @@ MAX_BODY_SIZE = 32 * 1024
 BODY_CAPTURE_TIMEOUT = 5.0
 
 
-_HTML_PREFIX_RE = re.compile(
-    r"^\s*<\s*(?:!doctype|html|head|body|script|div|span|p|a|meta|title|link|style|svg|form|input|textarea|button)\b",
-    re.IGNORECASE,
-)
 _JSON_KEY_RE = re.compile(r'"([^"]{1,200})"\s*:', re.MULTILINE)
 
 _SENSITIVE_POST_KEYS = (
@@ -115,9 +111,23 @@ def _get_header_value(headers: dict[str, str], name: str) -> str | None:
 
 
 def _looks_like_html(body: str) -> bool:
-    # Fast and intentionally blunt. If it looks like HTML, we do not persist it.
-    head = body[:1024]
-    return _HTML_PREFIX_RE.search(head) is not None
+    # Intentionally blunt: any response body that *starts* with markup after leading whitespace
+    # is treated as HTML-like and excluded from persistence (covers HTML, XML, comments, etc).
+    #
+    # Rationale: avoid brittle tag allowlists that can be bypassed by uncommon tags like <main>
+    # or payloads like <!-- ... --> or <?xml ... ?>.
+    if not body:
+        return False
+    i = 0
+    n = len(body)
+    while i < n:
+        ch = body[i]
+        # Match str.lstrip() behavior for whitespace, plus a leading UTF-8 BOM if present.
+        if ch.isspace() or ch == "\ufeff":
+            i += 1
+            continue
+        return ch == "<"
+    return False
 
 
 def _truncate_utf8_bytes(value: str, *, max_bytes: int) -> str:

@@ -237,6 +237,41 @@ async def test_recorder_does_not_persist_html_detected_by_common_tag_prefix() ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<h1>nope</h1>",
+        "<main>nope</main>",
+        "<!--nope-->",
+        "<?xml version='1.0'?><root />",
+        " \n\t<main>nope</main>",
+    ],
+)
+async def test_recorder_does_not_persist_html_detected_by_any_lt_prefix(body: str) -> None:
+    recorder = RecipeRecorder(task="t")
+    await recorder.attach(_DummyBrowserSession({"body": body, "base64Encoded": False}))
+
+    recorder._on_request_will_be_sent(
+        {"requestId": "1", "type": "XHR", "documentURL": "https://example.com/page", "request": {"url": "https://x", "method": "GET", "headers": {}}},
+        session_id=None,
+    )
+    recorder._on_response_received(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "response": {"url": "https://x", "status": 200, "headers": {"Content-Type": "application/json"}, "mimeType": "application/json"},
+        },
+        session_id=None,
+    )
+
+    await recorder.finalize()
+    recording = recorder.get_recording(result="ok")
+    resp = recording.responses[0]
+    assert resp.body is None
+    assert resp.json_key_sample is None
+
+
+@pytest.mark.asyncio
 async def test_recorder_does_not_persist_base64_encoded_body() -> None:
     recorder = RecipeRecorder(task="t")
     await recorder.attach(_DummyBrowserSession({"body": "AAECAwQ=", "base64Encoded": True}))
