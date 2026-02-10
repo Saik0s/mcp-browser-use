@@ -6,11 +6,14 @@ Tests SSRF protection, header stripping, domain allowlisting, and URL encoding.
 import pytest
 
 from mcp_server_browser_use.recipes.models import (
-    SENSITIVE_HEADERS,
+    PUBLIC_HEADER_ALLOWLIST,
+    SENSITIVE_HEADER_SUBSTRINGS,
     Recipe,
     RecipeRequest,
+    is_sensitive_header_name,
     strip_sensitive_headers,
 )
+from mcp_server_browser_use.recipes.recorder import RecipeRecorder
 from mcp_server_browser_use.recipes.runner import (
     _is_ip_blocked,
     _normalize_ip,
@@ -123,6 +126,7 @@ def test_strip_sensitive_headers() -> None:
         "Content-Type": "application/json",
         "Authorization": "Bearer secret-token",
         "Cookie": "session=abc123",
+        "X-Session-Id": "session-id",
         "X-Custom": "allowed-value",
         "X-API-Key": "secret-api-key",
     }
@@ -183,6 +187,90 @@ def test_recipe_to_dict_strips_headers() -> None:
     assert "Authorization" not in data["request"]["headers"]
     assert "***REDACTED***" not in str(data)
     assert data["request"]["headers"] == {"Content-Type": "application/json"}
+
+
+def test_strip_sensitive_headers_substring_matching() -> None:
+    """Test stripping uses token/segment matching, not exact names only."""
+    headers = {
+        "X-Auth-Request-Access-Token": "secret",
+        "X-CSRFToken": "secret",
+        "X_API_KEY": "secret",
+        "X-Custom": "ok",
+    }
+    result = strip_sensitive_headers(headers)
+    assert result == {"X-Custom": "ok"}
+
+
+def test_strip_sensitive_headers_session_and_xsrf_variants() -> None:
+    """Regression: session identifiers and XSRF variants must be treated as sensitive."""
+    headers = {
+        ":authority": "example.com",
+        "Author": "not-a-secret",
+        "X-Session-Id": "sess_123",
+        "X-XSRF": "xsrf_1",
+        "X-XSRF-TOKEN": "xsrf_2",
+        "XSRF-TOKEN": "xsrf_3",
+        "X-CSRFToken": "csrf_1",
+        "X-Custom": "ok",
+    }
+    result = strip_sensitive_headers(headers)
+    assert result == {":authority": "example.com", "Author": "not-a-secret", "X-Custom": "ok"}
+
+
+def test_strip_sensitive_headers_allowlist_override() -> None:
+    """Test allowlisted headers are kept even if they match sensitive substrings."""
+    headers = {
+        "X-CSRF-Protection": "1",
+        "X-CSRF-Token": "secret",
+        "Content-Type": "application/json",
+    }
+    result = strip_sensitive_headers(headers)
+    assert result == {"X-CSRF-Protection": "1", "Content-Type": "application/json"}
+
+
+def test_is_sensitive_header_name_respects_allowlist() -> None:
+    """Sanity check the predicate and allowlist are aligned."""
+    assert "x-csrf-protection" in PUBLIC_HEADER_ALLOWLIST
+    assert is_sensitive_header_name("X-CSRF-Protection") is False
+    assert is_sensitive_header_name("X-CSRF-Token") is True
+
+
+def test_is_sensitive_header_name_avoids_false_positives() -> None:
+    """Regression: avoid naive substring matches like 'auth' in ':authority' or 'author'."""
+    assert is_sensitive_header_name(":authority") is False
+    assert is_sensitive_header_name("Author") is False
+    assert is_sensitive_header_name("X-Author") is False
+    assert is_sensitive_header_name("Authorization") is True
+    assert is_sensitive_header_name("X-Auth-Token") is True
+
+
+def test_recorder_redacts_sensitive_headers_by_pattern() -> None:
+    """Recorder should redact (not strip) values based on token/segment matching."""
+    recorder = RecipeRecorder(task="test")
+    headers = {
+        ":authority": "example.com",
+        "Author": "not-a-secret",
+        "Authorization": "Bearer secret",
+        "X-Auth-Token": "secret",
+        "X-CSRFToken": "secret",
+        "X_API_KEY": "secret",
+        "X-Session-Id": "session-id",
+        "X-XSRF": "xsrf_1",
+        "X-Custom": "ok",
+        "X-CSRF-Protection": "1",  # allowlisted
+    }
+    redacted = recorder._redact_headers(headers)
+
+    assert redacted[":authority"] == "example.com"
+    assert redacted["Author"] == "not-a-secret"
+    assert redacted["X-Custom"] == "ok"
+    assert redacted["X-CSRF-Protection"] == "1"
+    assert redacted["Authorization"] == "[REDACTED]"
+    assert redacted["X-Auth-Token"] == "[REDACTED]"
+    assert redacted["X-CSRFToken"] == "[REDACTED]"
+    assert redacted["X_API_KEY"] == "[REDACTED]"
+    assert redacted["X-Session-Id"] == "[REDACTED]"
+    assert redacted["X-XSRF"] == "[REDACTED]"
 
 
 # --- Domain Allowlist Tests ---
@@ -346,8 +434,8 @@ def test_recipe_allowed_domains_serialization() -> None:
 
 
 def test_sensitive_headers_constant() -> None:
-    """Test SENSITIVE_HEADERS contains expected values."""
-    assert "authorization" in SENSITIVE_HEADERS
-    assert "cookie" in SENSITIVE_HEADERS
-    assert "x-api-key" in SENSITIVE_HEADERS
-    assert "x-auth-token" in SENSITIVE_HEADERS
+    """Test sensitive header substrings contain expected patterns."""
+    assert "auth" in SENSITIVE_HEADER_SUBSTRINGS
+    assert "cookie" in SENSITIVE_HEADER_SUBSTRINGS
+    assert "csrf" in SENSITIVE_HEADER_SUBSTRINGS
+    assert "token" in SENSITIVE_HEADER_SUBSTRINGS
