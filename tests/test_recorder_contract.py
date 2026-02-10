@@ -145,7 +145,43 @@ async def test_recorder_body_cap_32kb() -> None:
     resp = recording.responses[0]
 
     assert resp.body is not None
-    assert len(resp.body) == MAX_BODY_SIZE
+    assert len(resp.body.encode("utf-8", errors="replace")) <= MAX_BODY_SIZE
+    assert resp.json_key_sample is not None
+    assert resp.json_key_sample.startswith("k")
+
+
+@pytest.mark.asyncio
+async def test_recorder_body_cap_32kb_is_bytes_not_chars() -> None:
+    recorder = RecipeRecorder(task="t")
+
+    # "€" is a 3-byte UTF-8 sequence, this ensures byte-length capping is exercised.
+    huge_value = "€" * (MAX_BODY_SIZE + 10_000)
+    await recorder.attach(_DummyBrowserSession({"body": '{"k":"' + huge_value + '"}', "base64Encoded": False}))
+
+    recorder._on_request_will_be_sent(
+        {
+            "requestId": "1",
+            "type": "Fetch",
+            "documentURL": "https://example.com/page",
+            "request": {"url": "https://x", "method": "GET", "headers": {}},
+        },
+        session_id=None,
+    )
+    recorder._on_response_received(
+        {
+            "requestId": "1",
+            "type": "Fetch",
+            "response": {"url": "https://x", "status": 200, "headers": {"Content-Type": "application/json"}, "mimeType": "application/json"},
+        },
+        session_id=None,
+    )
+
+    await recorder.finalize()
+    recording = recorder.get_recording(result="ok")
+    resp = recording.responses[0]
+
+    assert resp.body is not None
+    assert len(resp.body.encode("utf-8", errors="replace")) <= MAX_BODY_SIZE
     assert resp.json_key_sample is not None
     assert resp.json_key_sample.startswith("k")
 
@@ -154,6 +190,31 @@ async def test_recorder_body_cap_32kb() -> None:
 async def test_recorder_does_not_persist_html_even_if_mime_is_json() -> None:
     recorder = RecipeRecorder(task="t")
     await recorder.attach(_DummyBrowserSession({"body": "<!doctype html><html><body>nope</body></html>", "base64Encoded": False}))
+
+    recorder._on_request_will_be_sent(
+        {"requestId": "1", "type": "XHR", "documentURL": "https://example.com/page", "request": {"url": "https://x", "method": "GET", "headers": {}}},
+        session_id=None,
+    )
+    recorder._on_response_received(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "response": {"url": "https://x", "status": 200, "headers": {"Content-Type": "application/json"}, "mimeType": "application/json"},
+        },
+        session_id=None,
+    )
+
+    await recorder.finalize()
+    recording = recorder.get_recording(result="ok")
+    resp = recording.responses[0]
+    assert resp.body is None
+    assert resp.json_key_sample is None
+
+
+@pytest.mark.asyncio
+async def test_recorder_does_not_persist_html_detected_by_common_tag_prefix() -> None:
+    recorder = RecipeRecorder(task="t")
+    await recorder.attach(_DummyBrowserSession({"body": "<div>nope</div>", "base64Encoded": False}))
 
     recorder._on_request_will_be_sent(
         {"requestId": "1", "type": "XHR", "documentURL": "https://example.com/page", "request": {"url": "https://x", "method": "GET", "headers": {}}},
@@ -198,3 +259,69 @@ async def test_recorder_does_not_persist_base64_encoded_body() -> None:
     resp = recording.responses[0]
     assert resp.body is None
     assert resp.json_key_sample is None
+
+
+@pytest.mark.asyncio
+async def test_recorder_capture_gate_uses_response_content_type_header() -> None:
+    recorder = RecipeRecorder(task="t")
+    await recorder.attach(_DummyBrowserSession({"body": '{"a": 1}', "base64Encoded": False}))
+
+    recorder._on_request_will_be_sent(
+        {"requestId": "1", "type": "XHR", "documentURL": "https://example.com/page", "request": {"url": "https://x", "method": "GET", "headers": {}}},
+        session_id=None,
+    )
+    recorder._on_response_received(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "response": {"url": "https://x", "status": 200, "headers": {"Content-Type": "application/json"}, "mimeType": "text/plain"},
+        },
+        session_id=None,
+    )
+
+    await recorder.finalize()
+    recording = recorder.get_recording(result="ok")
+    resp = recording.responses[0]
+    assert resp.body is not None
+    assert resp.json_key_sample is not None
+
+
+@pytest.mark.asyncio
+async def test_recorder_sanitizes_url_and_redacts_post_data() -> None:
+    recorder = RecipeRecorder(task="t")
+    await recorder.attach(_DummyBrowserSession({"body": '{"ok": true}', "base64Encoded": False}))
+
+    raw_url = "https://api.example.com/v1/search?q=x&access_token=supersecret"
+    raw_post = '{"username":"u","password":"supersecret","token":"abc","nested":{"x":1}}'
+
+    recorder._on_request_will_be_sent(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "documentURL": "https://example.com/page",
+            "request": {"url": raw_url, "method": "POST", "headers": {"Content-Type": "application/json"}, "postData": raw_post},
+        },
+        session_id=None,
+    )
+    recorder._on_response_received(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "response": {"url": raw_url, "status": 200, "headers": {"Content-Type": "application/json"}, "mimeType": "application/json"},
+        },
+        session_id=None,
+    )
+
+    await recorder.finalize()
+    recording = recorder.get_recording(result="ok")
+
+    req = recording.requests[0]
+    assert "access_token" in req.url
+    assert "REDACTED" in req.url
+    assert "supersecret" not in req.url
+
+    assert req.post_data is not None
+    assert req.post_data != raw_post
+    assert "supersecret" not in req.post_data
+    assert "password" not in req.post_data.lower()
+    assert len(req.post_data.encode("utf-8", errors="replace")) <= 1024

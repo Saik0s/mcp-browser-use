@@ -51,8 +51,59 @@ MAX_BODY_SIZE = 32 * 1024
 BODY_CAPTURE_TIMEOUT = 5.0
 
 
-_HTML_PREFIX_RE = re.compile(r"^\s*<(?:!doctype|html)\b", re.IGNORECASE)
+_HTML_PREFIX_RE = re.compile(
+    r"^\s*<\s*(?:!doctype|html|head|body|script|div|span|p|a|meta|title|link|style|svg|form|input|textarea|button)\b",
+    re.IGNORECASE,
+)
 _JSON_KEY_RE = re.compile(r'"([^"]{1,200})"\s*:', re.MULTILINE)
+
+_SENSITIVE_POST_KEYS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "authorization",
+    "cookie",
+    "session",
+    "csrf",
+    "xsrf",
+    "api_key",
+    "apikey",
+)
+
+_MAX_POST_DATA_SUMMARY_BYTES = 1024
+
+_SENSITIVE_QUERY_KEYS = frozenset(
+    {
+        "access_token",
+        "apikey",
+        "api_key",
+        "auth",
+        "authorization",
+        "bearer",
+        "client_secret",
+        "cookie",
+        "csrf",
+        "id_token",
+        "password",
+        "refresh_token",
+        "secret",
+        "session",
+        "signature",
+        "sig",
+        "token",
+        "xsrf",
+    }
+)
+
+_CONDITIONAL_SENSITIVE_QUERY_KEYS = frozenset({"code", "key"})
+
+_JWT_PREFIX_RE = re.compile(r"^eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}$")
+_LONG_BASE64ISH_RE = re.compile(r"^[a-zA-Z0-9+/=_-]{60,}$")
+_LONG_BASE64URLISH_RE = re.compile(r"^[a-zA-Z0-9_-]{32,}={0,2}$")
+_LONG_HEX_RE = re.compile(r"^[a-fA-F0-9]{32,}$")
+_SLACK_TOKEN_RE = re.compile(r"^xox[a-z]-[0-9a-zA-Z-]{10,}$", flags=re.IGNORECASE)
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", flags=re.IGNORECASE)
 
 
 def _get_header_value(headers: dict[str, str], name: str) -> str | None:
@@ -67,6 +118,229 @@ def _looks_like_html(body: str) -> bool:
     # Fast and intentionally blunt. If it looks like HTML, we do not persist it.
     head = body[:1024]
     return _HTML_PREFIX_RE.search(head) is not None
+
+
+def _truncate_utf8_bytes(value: str, *, max_bytes: int) -> str:
+    if max_bytes <= 0:
+        return ""
+    raw = value.encode("utf-8", errors="replace")
+    if len(raw) <= max_bytes:
+        return value
+    # Avoid creating invalid utf-8 sequences by decoding with ignore.
+    return raw[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def _normalize_content_type_token(value: str) -> str:
+    # Example: "application/json; charset=utf-8" -> "application/json"
+    return value.split(";", 1)[0].strip().lower()
+
+
+def _truncate_str(value: str, max_len: int) -> str:
+    if max_len <= 0:
+        return ""
+    if len(value) <= max_len:
+        return value
+    return value[:max_len]
+
+
+def _looks_like_secret_query_value(value: str) -> bool:
+    if not value:
+        return False
+    v = value.strip()
+    if not v:
+        return False
+    if _SLACK_TOKEN_RE.match(v):
+        return True
+    if _JWT_PREFIX_RE.match(v):
+        return True
+    if _LONG_HEX_RE.match(v):
+        return True
+    if _LONG_BASE64URLISH_RE.match(v):
+        return True
+    if _LONG_BASE64ISH_RE.match(v):
+        return True
+    return False
+
+
+def _looks_like_code_or_key_secret(value: str) -> bool:
+    if not value:
+        return False
+    v = value.strip()
+    if not v:
+        return False
+    if v.isalpha() and len(v) <= 12:
+        return False
+    if _looks_like_secret_query_value(v):
+        return True
+    if _LONG_HEX_RE.match(v):
+        return True
+    return True
+
+
+def _sanitize_netloc(netloc: str, *, hostname: str | None, port: int | None) -> str:
+    # Strip userinfo deterministically. Prefer parsed hostname/port when available.
+    if not netloc:
+        return ""
+    if "@" not in netloc:
+        return netloc
+    if not hostname:
+        return netloc.rsplit("@", 1)[-1]
+
+    host = hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{host}:{port}" if port is not None else host
+
+
+def _looks_like_path_secret(segment: str) -> bool:
+    if not segment:
+        return False
+    s = segment.strip()
+    if not s:
+        return False
+    if _UUID_RE.match(s):
+        return True
+    if _JWT_PREFIX_RE.match(s):
+        return True
+    if _LONG_HEX_RE.match(s):
+        return True
+    if len(s) >= 32 and _LONG_BASE64URLISH_RE.match(s):
+        has_digit = any(ch.isdigit() for ch in s)
+        has_sep = ("_" in s) or ("-" in s)
+        return has_digit or has_sep
+    if _LONG_BASE64ISH_RE.match(s):
+        return True
+    return False
+
+
+def _redact_path_secrets(path: str) -> str:
+    if not path:
+        return ""
+    from urllib.parse import unquote
+
+    parts = path.split("/")
+    if len(parts) > 200:
+        parts = parts[:200]
+    out: list[str] = []
+    for seg in parts:
+        decoded = unquote(seg)
+        if _looks_like_path_secret(decoded):
+            out.append("[REDACTED]")
+        else:
+            out.append(seg)
+    return "/".join(out)
+
+
+def _sanitize_recorded_url(url: str, *, max_len: int = 2048) -> str:
+    """Sanitize recorded URLs to avoid persisting secrets in artifacts.
+
+    - Drops fragment (`#...`).
+    - Redacts userinfo (`user:pass@`) from netloc.
+    - Redacts sensitive query values and obvious secret-like query values.
+    - Redacts obviously token-like path segments.
+    - Bounds output length.
+    """
+    if not url:
+        return ""
+
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+    parsed = urlparse(url)
+    safe_netloc = _sanitize_netloc(parsed.netloc, hostname=parsed.hostname, port=parsed.port)
+    safe_path = _redact_path_secrets(parsed.path)
+    query_items = parse_qsl(parsed.query, keep_blank_values=True)
+
+    safe_items: list[tuple[str, str]] = []
+    for key, value in query_items:
+        key_l = key.lower()
+        if key_l in _SENSITIVE_QUERY_KEYS:
+            safe_items.append((key, "[REDACTED]"))
+            continue
+        if key_l in _CONDITIONAL_SENSITIVE_QUERY_KEYS and _looks_like_code_or_key_secret(value):
+            safe_items.append((key, "[REDACTED]"))
+            continue
+        if _looks_like_secret_query_value(value):
+            safe_items.append((key, "[REDACTED]"))
+            continue
+        safe_items.append((key, _truncate_str(value, 128)))
+
+    safe_query = urlencode(safe_items, doseq=True, safe=":/@")
+    safe_url = urlunparse((parsed.scheme, safe_netloc, safe_path, parsed.params, safe_query, ""))  # drop fragment
+
+    return _truncate_str(safe_url, max_len)
+
+
+def _is_jsonish_content_type(*, mime_type: str, content_type_header: str | None) -> bool:
+    # Consider both CDP mimeType and response header Content-Type.
+    tokens: list[str] = []
+    if mime_type:
+        tokens.append(_normalize_content_type_token(mime_type))
+    if content_type_header:
+        tokens.append(_normalize_content_type_token(content_type_header))
+
+    for t in tokens:
+        if not t:
+            continue
+        if t in JSON_CONTENT_TYPES:
+            return True
+        if t.endswith("+json"):
+            return True
+        if "json" in t:
+            # Conservative: treat any json-ish token as JSON API.
+            return True
+    return False
+
+
+def _sanitize_post_key_name(key: str) -> str:
+    kl = key.lower()
+    for sub in _SENSITIVE_POST_KEYS:
+        if sub in kl:
+            return "[REDACTED_KEY]"
+    # Keep it small and readable.
+    return key[:64]
+
+
+def _post_data_summary(post_data: str | None, *, content_type: str | None) -> str | None:
+    # Contract: never persist raw post_data.
+    if not post_data:
+        return None
+
+    import json
+    from urllib.parse import parse_qsl
+
+    ct = (content_type or "").lower()
+    size_bytes = len(post_data.encode("utf-8", errors="replace"))
+
+    def finish(summary: str) -> str:
+        return _truncate_utf8_bytes(summary, max_bytes=_MAX_POST_DATA_SUMMARY_BYTES)
+
+    # JSON bodies: keep only key structure.
+    if "application/json" in ct or post_data.lstrip().startswith(("{", "[")):
+        try:
+            parsed: object = json.loads(post_data)
+        except Exception:
+            return finish(f"json bytes={size_bytes} (parse_error)")
+
+        if isinstance(parsed, dict):
+            keys = sorted(_sanitize_post_key_name(str(k)) for k in parsed)
+            keys = keys[:25]
+            return finish(f"json bytes={size_bytes} keys={keys}")
+        if isinstance(parsed, list):
+            return finish(f"json bytes={size_bytes} kind=list len={len(parsed)}")
+        return finish(f"json bytes={size_bytes} kind={type(parsed).__name__}")
+
+    # Form bodies: keep keys only.
+    if "application/x-www-form-urlencoded" in ct:
+        items = parse_qsl(post_data, keep_blank_values=True)
+        keys = sorted({_sanitize_post_key_name(k) for k, _ in items})
+        keys = keys[:25]
+        return finish(f"form bytes={size_bytes} keys={keys}")
+
+    if "multipart/form-data" in ct:
+        return finish(f"multipart bytes={size_bytes}")
+
+    # Unknown: keep size only.
+    return finish(f"bytes={size_bytes}")
 
 
 def _json_key_sample(body: str, *, max_chars: int = 200) -> str | None:
@@ -255,23 +529,35 @@ class RecipeRecorder:
             if not initiator_url and self._navigation_urls:
                 initiator_url = self._navigation_urls[-1]
 
+            raw_url = request_data.get("url", "")
+            url = _sanitize_recorded_url(raw_url, max_len=2048) if isinstance(raw_url, str) else ""
+            initiator_url_s = (
+                _sanitize_recorded_url(initiator_url, max_len=2048) if isinstance(initiator_url, str) and initiator_url else initiator_url
+            )
+
+            post_data_raw = request_data.get("postData")
+            post_data = _post_data_summary(
+                post_data_raw if isinstance(post_data_raw, str) else None,
+                content_type=_get_header_value(raw_headers, "content-type"),
+            )
+
             # Capture request details
             network_request = NetworkRequest(
-                url=request_data.get("url", ""),
+                url=url,
                 method=request_data.get("method", "GET"),
                 headers=self._redact_headers(raw_headers),
-                post_data=request_data.get("postData"),
+                post_data=post_data,
                 resource_type=resource_type,
                 timestamp=time.time(),
                 request_id=request_id,
-                initiator_url=initiator_url,
+                initiator_url=initiator_url_s,
             )
 
             self._requests[request_id] = network_request
 
             # Track navigation (Document type)
             if resource_type == "document":
-                self._navigation_urls.append(request_data.get("url", ""))
+                self._navigation_urls.append(url)
 
             logger.debug(f"Recorded CDP request: {network_request.method} {network_request.url[:80]}...")
 
@@ -292,8 +578,11 @@ class RecipeRecorder:
             raw_headers: dict[str, str] = dict(response_data.get("headers", {}))  # type: ignore[arg-type]
 
             # Get content type
-            mime_type = response_data.get("mimeType", "")
-            content_type = _get_header_value(raw_headers, "content-type") or mime_type
+            mime_type_raw = response_data.get("mimeType", "")
+            mime_type = mime_type_raw if isinstance(mime_type_raw, str) else ""
+            content_type_header = _get_header_value(raw_headers, "content-type")
+            content_type = content_type_header or mime_type
+            is_jsonish = _is_jsonish_content_type(mime_type=mime_type, content_type_header=content_type_header)
             byte_length: int | None = None
             content_length = _get_header_value(raw_headers, "content-length")
             if isinstance(content_length, str) and content_length:
@@ -309,8 +598,10 @@ class RecipeRecorder:
                 request_ts = request_obj.timestamp
 
             now_ts = time.time()
+            resp_url_raw = response_data.get("url", "")
+            resp_url = _sanitize_recorded_url(resp_url_raw, max_len=2048) if isinstance(resp_url_raw, str) else ""
             network_response = NetworkResponse(
-                url=response_data.get("url", ""),
+                url=resp_url,
                 status=response_data.get("status", 0),
                 headers=self._redact_headers(raw_headers),
                 body=None,  # Body captured async if needed
@@ -328,17 +619,14 @@ class RecipeRecorder:
 
             # Schedule body capture for API calls (XHR/Fetch with JSON content)
             # Also capture document loads that return JSON (direct API navigation)
-            is_api_call = resource_type in ("xhr", "fetch")
-            is_json_document = resource_type == "document" and any(ct in mime_type.lower() for ct in JSON_CONTENT_TYPES)
-
-            if is_api_call or is_json_document:
-                if any(ct in mime_type.lower() for ct in JSON_CONTENT_TYPES):
-                    task = asyncio.create_task(
-                        self._capture_body_cdp(request_id, network_response, session_id),
-                        name=f"capture_body_{request_id[:8]}",
-                    )
-                    self._pending_tasks.add(task)
-                    task.add_done_callback(lambda t: self._pending_tasks.discard(t))
+            should_consider = resource_type in ("xhr", "fetch", "document")
+            if should_consider and is_jsonish:
+                task = asyncio.create_task(
+                    self._capture_body_cdp(request_id, network_response, session_id),
+                    name=f"capture_body_{request_id[:8]}",
+                )
+                self._pending_tasks.add(task)
+                task.add_done_callback(lambda t: self._pending_tasks.discard(t))
 
             logger.debug(f"Recorded CDP response: {network_response.status} {network_response.url[:80]}...")
 
@@ -413,6 +701,8 @@ class RecipeRecorder:
                 )
 
                 body = result.get("body", "")
+                if not isinstance(body, str):
+                    body = str(body)
 
                 # Handle base64 encoded bodies
                 if result.get("base64Encoded", False):
@@ -421,9 +711,8 @@ class RecipeRecorder:
                     network_response.json_key_sample = None
                     return
 
-                # Enforce storage caps (strict, no marker suffix that might exceed MAX_BODY_SIZE).
-                if len(body) > MAX_BODY_SIZE:
-                    body = body[:MAX_BODY_SIZE]
+                # Enforce storage caps in BYTES (strict, no marker suffix that might exceed MAX_BODY_SIZE).
+                body = _truncate_utf8_bytes(body, max_bytes=MAX_BODY_SIZE)
 
                 # Contract: never persist HTML bodies.
                 if _looks_like_html(body):
