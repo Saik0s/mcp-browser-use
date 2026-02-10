@@ -1137,16 +1137,16 @@ To learn new recipes, use run_browser_agent with learn=True."""
 
         return JSONResponse(json.loads(result))
 
-    # REST API endpoints for skills
+    # REST API endpoints for recipes
     def _get_recipe_store() -> RecipeStore | None:
-        """Get skill store instance if skills are enabled."""
+        """Get recipe store instance if recipes are enabled."""
         if settings.recipes.enabled:
             return RecipeStore(directory=settings.recipes.directory)
         return None
 
-    @server.custom_route(path="/api/skills", methods=["GET"])
-    async def api_skills(request):
-        """REST endpoint for skills list."""
+    @server.custom_route(path="/api/recipes", methods=["GET"])
+    async def api_recipes(request):
+        """REST endpoint for recipes list."""
 
         from starlette.responses import JSONResponse
 
@@ -1155,30 +1155,30 @@ To learn new recipes, use run_browser_agent with learn=True."""
             return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
 
         try:
-            skills = store.list_all()
+            recipes = store.list_all()
             return JSONResponse(
                 {
                     "recipes": [
                         {
-                            "name": s.name,
-                            "description": s.description,
-                            "success_rate": round(s.success_rate * 100, 1),
-                            "usage_count": s.success_count + s.failure_count,
-                            "last_used": s.last_used.isoformat() if s.last_used else None,
+                            "name": recipe.name,
+                            "description": recipe.description,
+                            "success_rate": round(recipe.success_rate * 100, 1),
+                            "usage_count": recipe.success_count + recipe.failure_count,
+                            "last_used": recipe.last_used.isoformat() if recipe.last_used else None,
                         }
-                        for s in skills
+                        for recipe in recipes
                     ],
-                    "count": len(skills),
-                    "skills_directory": str(store.directory),
+                    "count": len(recipes),
+                    "recipes_directory": str(store.directory),
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to list skills: {e}")
+            logger.error(f"Failed to list recipes: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @server.custom_route(path="/api/skills/{name}", methods=["GET"])
-    async def api_skill_get(request):
-        """REST endpoint for skill details."""
+    @server.custom_route(path="/api/recipes/{name}", methods=["GET"])
+    async def api_recipe_get(request):
+        """REST endpoint for recipe details."""
 
         from starlette.responses import JSONResponse
 
@@ -1189,20 +1189,18 @@ To learn new recipes, use run_browser_agent with learn=True."""
         recipe_name = request.path_params["name"]
 
         try:
-            skill = store.load(recipe_name)
-            if not skill:
+            recipe = store.load(recipe_name)
+            if not recipe:
                 return JSONResponse({"error": f"Recipe '{recipe_name}' not found"}, status_code=404)
 
-            # Return skill as JSON (convert from dict representation)
-            skill_dict = skill.to_dict()
-            return JSONResponse(skill_dict)
+            return JSONResponse(recipe.to_dict())
         except Exception as e:
-            logger.error(f"Failed to get skill {recipe_name}: {e}")
+            logger.error(f"Failed to get recipe {recipe_name}: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @server.custom_route(path="/api/skills/{name}", methods=["DELETE"])
-    async def api_skill_delete(request):
-        """REST endpoint for skill deletion."""
+    @server.custom_route(path="/api/recipes/{name}", methods=["DELETE"])
+    async def api_recipe_delete(request):
+        """REST endpoint for recipe deletion."""
         from starlette.responses import JSONResponse
 
         store = _get_recipe_store()
@@ -1216,23 +1214,23 @@ To learn new recipes, use run_browser_agent with learn=True."""
                 return JSONResponse({"success": True, "message": f"Recipe '{recipe_name}' deleted successfully"})
             return JSONResponse({"error": f"Recipe '{recipe_name}' not found"}, status_code=404)
         except Exception as e:
-            logger.error(f"Failed to delete skill {recipe_name}: {e}")
+            logger.error(f"Failed to delete recipe {recipe_name}: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @server.custom_route(path="/api/skills/{name}/run", methods=["POST"])
-    async def api_skill_run(request):
-        """REST endpoint for skill execution.
+    @server.custom_route(path="/api/recipes/{name}/run", methods=["POST"])
+    async def api_recipe_run(request):
+        """REST endpoint for recipe execution.
 
         Request body:
         {
             "url": "https://example.com",  # Optional - can be part of task description
-            "params": {...}                 # Optional skill parameters
+            "params": {...}                 # Optional recipe parameters
         }
 
         Returns:
         {
             "task_id": "abc123...",
-            "message": "Skill execution started"
+            "message": "Recipe execution started"
         }
         """
         from starlette.responses import JSONResponse
@@ -1251,7 +1249,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
         params = body.get("params", {})
 
         # Build task description
-        task_desc = f"Use the {recipe_name} skill"
+        task_desc = f"Use the {recipe_name} recipe"
         if url:
             task_desc += f" at {url}"
 

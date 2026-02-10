@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias, TypeGuard
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.sources import InitSettingsSource, PydanticBaseSettingsSource
 
@@ -220,6 +220,15 @@ class BrowserSettings(MCPBaseSettings):
     proxy_bypass: str | None = Field(default=None, description="Comma-separated hosts to bypass proxy")
     cdp_url: str | None = Field(default=None, description="CDP URL for external browser (e.g., http://localhost:9222)")
     user_data_dir: str | None = Field(default=None, description="Path to Chrome user data directory for persistent profile")
+
+    @field_validator("cdp_url", mode="before")
+    @classmethod
+    def normalize_cdp_url(cls, value: object) -> object:
+        # Allow env override with empty string to force "no external browser".
+        # This avoids test flakiness when a developer's ~/.config sets a CDP URL.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @model_validator(mode="after")
     def validate_cdp_url(self) -> "BrowserSettings":

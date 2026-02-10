@@ -750,9 +750,9 @@
                 <li class="tab active" hx-get="/api/tasks?limit=20" hx-target="#content" hx-trigger="click" onclick="setActiveTab(this)">
                     Tasks
                 </li>
-                <li class="tab" hx-get="/api/skills" hx-target="#content" hx-trigger="click" onclick="setActiveTab(this)">
-                    Skills
-                </li>
+	                <li class="tab" hx-get="/api/recipes" hx-target="#content" hx-trigger="click" onclick="setActiveTab(this)">
+	                    Recipes
+	                </li>
                 <li class="tab" onclick="setActiveTab(this); loadHistory()">
                     History
                 </li>
@@ -867,24 +867,24 @@
             }
         });
 
-        // Render tasks and skills from API response
-        document.body.addEventListener('htmx:afterOnLoad', (event) => {
-            if (event.detail.xhr.responseURL.includes('/api/tasks')) {
-                try {
-                    const data = JSON.parse(event.detail.xhr.response);
-                    renderTasks(data);
-                } catch (error) {
-                    console.error('Failed to parse tasks:', error);
-                }
-            } else if (event.detail.xhr.responseURL.includes('/api/skills') && !event.detail.xhr.responseURL.match(/\/api\/skills\/[^\/]+$/)) {
-                try {
-                    const data = JSON.parse(event.detail.xhr.response);
-                    renderSkills(data);
-                } catch (error) {
-                    console.error('Failed to parse skills:', error);
-                }
-            }
-        });
+	        // Render tasks and recipes from API response
+	        document.body.addEventListener('htmx:afterOnLoad', (event) => {
+	            if (event.detail.xhr.responseURL.includes('/api/tasks')) {
+	                try {
+	                    const data = JSON.parse(event.detail.xhr.response);
+	                    renderTasks(data);
+	                } catch (error) {
+	                    console.error('Failed to parse tasks:', error);
+	                }
+	            } else if (event.detail.xhr.responseURL.includes('/api/recipes') && !event.detail.xhr.responseURL.match(/\/api\/recipes\/[^\/]+$/)) {
+	                try {
+	                    const data = JSON.parse(event.detail.xhr.response);
+	                    renderRecipes(data);
+	                } catch (error) {
+	                    console.error('Failed to parse recipes:', error);
+	                }
+	            }
+	        });
 
         function renderTasks(data) {
             const tasks = data.tasks || [];
@@ -926,77 +926,77 @@
             content.innerHTML = html;
         }
 
-        function renderSkills(data) {
-            const skills = data.skills || [];
-            const content = document.getElementById('content');
+	        function renderRecipes(data) {
+	            const recipes = data.recipes || [];
+	            const content = document.getElementById('content');
 
-            if (data.error) {
-                content.innerHTML = `
-                    <div class="panel-header">
-                        <div class="panel-title">Browser Skills</div>
-                    </div>
-                    <div class="empty-state">
-                        <div class="empty-icon">⚠️</div>
-                        <p><strong>${escapeHtml(data.error)}</strong></p>
-                        <p style="font-size: 14px; margin-top: 8px;">Skills feature may be disabled in config</p>
-                    </div>
-                `;
-                return;
-            }
+	            if (data.error) {
+	                content.innerHTML = `
+	                    <div class="panel-header">
+	                        <div class="panel-title">Browser Recipes</div>
+	                    </div>
+	                    <div class="empty-state">
+	                        <div class="empty-icon">⚠️</div>
+	                        <p><strong>${escapeHtml(data.error)}</strong></p>
+	                        <p style="font-size: 14px; margin-top: 8px;">Recipes feature may be disabled in config</p>
+	                    </div>
+	                `;
+	                return;
+	            }
 
-            if (skills.length === 0) {
-                content.innerHTML = `
-                    <div class="panel-header">
-                        <div class="panel-title">Browser Skills</div>
-                    </div>
-                    <div class="empty-state">
-                        <div class="empty-icon">🎯</div>
-                        <p>No skills learned yet</p>
-                        <p style="font-size: 14px; margin-top: 8px;">Skills are created automatically during browser automation</p>
-                    </div>
-                `;
-                return;
-            }
+	            if (recipes.length === 0) {
+	                content.innerHTML = `
+	                    <div class="panel-header">
+	                        <div class="panel-title">Browser Recipes</div>
+	                    </div>
+	                    <div class="empty-state">
+	                        <div class="empty-icon">🎯</div>
+	                        <p>No recipes learned yet</p>
+	                        <p style="font-size: 14px; margin-top: 8px;">Recipes are created automatically during browser automation</p>
+	                    </div>
+	                `;
+	                return;
+	            }
 
-            let html = '<div class="panel-header"><div class="panel-title">Browser Skills</div></div>';
-            html += '<table class="skill-table">';
+	            let html = '<div class="panel-header"><div class="panel-title">Browser Recipes</div></div>';
+	            html += '<table class="skill-table">';
 
-            skills.forEach(skill => {
-                const lastUsed = skill.last_used ? new Date(skill.last_used).toLocaleDateString() : 'Never';
-                html += `
-                    <tr class="skill-row" onclick="showSkillDetail('${escapeHtml(skill.name)}')">
-                        <td>
-                            <div class="skill-name-cell">${escapeHtml(skill.name)}</div>
-                            <div class="skill-desc-cell">${escapeHtml(skill.description || 'No description')}</div>
-                        </td>
-                        <td>
-                            <div class="skill-stats">
-                                <span class="success-rate">${skill.success_rate}%</span>
-                                <span>${skill.usage_count} uses</span>
-                                <span>Last: ${lastUsed}</span>
-                            </div>
-                        </td>
-                    </tr>
-                `;
-            });
+	            recipes.forEach(recipe => {
+	                const lastUsed = recipe.last_used ? new Date(recipe.last_used).toLocaleDateString() : 'Never';
+	                html += `
+	                    <tr class="skill-row" onclick="showRecipeDetail('${escapeHtml(recipe.name)}')">
+	                        <td>
+	                            <div class="skill-name-cell">${escapeHtml(recipe.name)}</div>
+	                            <div class="skill-desc-cell">${escapeHtml(recipe.description || 'No description')}</div>
+	                        </td>
+	                        <td>
+	                            <div class="skill-stats">
+	                                <span class="success-rate">${recipe.success_rate}%</span>
+	                                <span>${recipe.usage_count} uses</span>
+	                                <span>Last: ${lastUsed}</span>
+	                            </div>
+	                        </td>
+	                    </tr>
+	                `;
+	            });
 
             html += '</table>';
             content.innerHTML = html;
         }
 
-        async function showSkillDetail(skillName) {
+        async function showRecipeDetail(recipeName) {
             const modal = document.getElementById('skill-modal');
             modal.innerHTML = `
-                <div class="modal-overlay" onclick="closeSkillModal(event)">
+                <div class="modal-overlay" onclick="closeRecipeModal(event)">
                     <div class="modal" onclick="event.stopPropagation()">
                         <div class="modal-header">
-                            <div class="modal-title">Loading skill...</div>
-                            <button class="modal-close" onclick="closeSkillModal()">&times;</button>
+                            <div class="modal-title">Loading recipe...</div>
+                            <button class="modal-close" onclick="closeRecipeModal()">&times;</button>
                         </div>
                         <div class="modal-body">
                             <div class="loading">
                                 <div class="spinner"></div>
-                                <p>Loading skill details...</p>
+                                <p>Loading recipe details...</p>
                             </div>
                         </div>
                     </div>
@@ -1005,31 +1005,31 @@
             modal.style.display = 'block';
 
             try {
-                const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`);
+                const response = await fetch(`${API_BASE}/recipes/${encodeURIComponent(recipeName)}`);
                 if (!response.ok) {
-                    throw new Error(`Failed to load skill: ${response.statusText}`);
+                    throw new Error(`Failed to load recipe: ${response.statusText}`);
                 }
 
-                const skill = await response.json();
-                renderSkillDetail(skill);
+                const recipe = await response.json();
+                renderRecipeDetail(recipe);
             } catch (error) {
-                console.error('Failed to load skill:', error);
+                console.error('Failed to load recipe:', error);
                 modal.innerHTML = `
-                    <div class="modal-overlay" onclick="closeSkillModal(event)">
+                    <div class="modal-overlay" onclick="closeRecipeModal(event)">
                         <div class="modal" onclick="event.stopPropagation()">
                             <div class="modal-header">
                                 <div class="modal-title">Error</div>
-                                <button class="modal-close" onclick="closeSkillModal()">&times;</button>
+                                <button class="modal-close" onclick="closeRecipeModal()">&times;</button>
                             </div>
                             <div class="modal-body">
                                 <div class="empty-state">
                                     <div class="empty-icon">⚠️</div>
-                                    <p><strong>Failed to load skill</strong></p>
+                                    <p><strong>Failed to load recipe</strong></p>
                                     <p style="font-size: 14px; margin-top: 8px;">${escapeHtml(error.message)}</p>
                                 </div>
                             </div>
                             <div class="modal-footer">
-                                <button class="btn btn-secondary" onclick="closeSkillModal()">Close</button>
+                                <button class="btn btn-secondary" onclick="closeRecipeModal()">Close</button>
                             </div>
                         </div>
                     </div>
@@ -1037,15 +1037,15 @@
             }
         }
 
-        function renderSkillDetail(skill) {
+        function renderRecipeDetail(recipe) {
             const modal = document.getElementById('skill-modal');
-            const successRate = skill.success_rate ? (skill.success_rate * 100).toFixed(1) : 0;
-            const usageCount = (skill.success_count || 0) + (skill.failure_count || 0);
-            const lastUsed = skill.last_used ? new Date(skill.last_used).toLocaleString() : 'Never';
+            const successRate = recipe.success_rate ? (recipe.success_rate * 100).toFixed(1) : 0;
+            const usageCount = (recipe.success_count || 0) + (recipe.failure_count || 0);
+            const lastUsed = recipe.last_used ? new Date(recipe.last_used).toLocaleString() : 'Never';
 
             let actionsHtml = '';
-            if (skill.actions && skill.actions.length > 0) {
-                actionsHtml = skill.actions.map((action, idx) =>
+            if (recipe.actions && recipe.actions.length > 0) {
+                actionsHtml = recipe.actions.map((action, idx) =>
                     `<div>${idx + 1}. ${escapeHtml(JSON.stringify(action))}</div>`
                 ).join('');
             } else {
@@ -1053,16 +1053,16 @@
             }
 
             modal.innerHTML = `
-                <div class="modal-overlay" onclick="closeSkillModal(event)">
+                <div class="modal-overlay" onclick="closeRecipeModal(event)">
                     <div class="modal" onclick="event.stopPropagation()">
                         <div class="modal-header">
-                            <div class="modal-title">${escapeHtml(skill.name)}</div>
-                            <button class="modal-close" onclick="closeSkillModal()">&times;</button>
+                            <div class="modal-title">${escapeHtml(recipe.name)}</div>
+                            <button class="modal-close" onclick="closeRecipeModal()">&times;</button>
                         </div>
                         <div class="modal-body">
                             <div class="skill-detail-section">
                                 <h3>Description</h3>
-                                <div class="skill-detail-value">${escapeHtml(skill.description || 'No description')}</div>
+                                <div class="skill-detail-value">${escapeHtml(recipe.description || 'No description')}</div>
                             </div>
 
                             <div class="skill-detail-section">
@@ -1070,16 +1070,16 @@
                                 <div class="skill-detail-value">
                                     <div>Success Rate: <strong class="success-rate">${successRate}%</strong></div>
                                     <div>Total Uses: <strong>${usageCount}</strong></div>
-                                    <div>Successes: <strong>${skill.success_count || 0}</strong></div>
-                                    <div>Failures: <strong>${skill.failure_count || 0}</strong></div>
+                                    <div>Successes: <strong>${recipe.success_count || 0}</strong></div>
+                                    <div>Failures: <strong>${recipe.failure_count || 0}</strong></div>
                                     <div>Last Used: <strong>${lastUsed}</strong></div>
                                 </div>
                             </div>
 
-                            ${skill.url ? `
+                            ${recipe.url ? `
                             <div class="skill-detail-section">
                                 <h3>URL Pattern</h3>
-                                <div class="skill-detail-code">${escapeHtml(skill.url)}</div>
+                                <div class="skill-detail-code">${escapeHtml(recipe.url)}</div>
                             </div>
                             ` : ''}
 
@@ -1088,69 +1088,69 @@
                                 <div class="skill-detail-code">${actionsHtml}</div>
                             </div>
 
-                            ${skill.success_indicators && skill.success_indicators.length > 0 ? `
+                            ${recipe.success_indicators && recipe.success_indicators.length > 0 ? `
                             <div class="skill-detail-section">
                                 <h3>Success Indicators</h3>
-                                <div class="skill-detail-code">${escapeHtml(JSON.stringify(skill.success_indicators, null, 2))}</div>
+                                <div class="skill-detail-code">${escapeHtml(JSON.stringify(recipe.success_indicators, null, 2))}</div>
                             </div>
                             ` : ''}
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeSkillModal()">Close</button>
-                            <button class="btn btn-danger" onclick="confirmDeleteSkill('${escapeHtml(skill.name)}')">Delete Skill</button>
+                            <button class="btn btn-secondary" onclick="closeRecipeModal()">Close</button>
+                            <button class="btn btn-danger" onclick="confirmDeleteRecipe('${escapeHtml(recipe.name)}')">Delete Recipe</button>
                         </div>
                     </div>
                 </div>
             `;
         }
 
-        function closeSkillModal(event) {
+        function closeRecipeModal(event) {
             if (event && event.target !== event.currentTarget) return;
             const modal = document.getElementById('skill-modal');
             modal.style.display = 'none';
             modal.innerHTML = '';
         }
 
-        function confirmDeleteSkill(skillName) {
+        function confirmDeleteRecipe(recipeName) {
             const modal = document.getElementById('skill-modal');
             modal.innerHTML = `
-                <div class="modal-overlay" onclick="closeSkillModal(event)">
+                <div class="modal-overlay" onclick="closeRecipeModal(event)">
                     <div class="modal" onclick="event.stopPropagation()">
                         <div class="modal-header">
                             <div class="modal-title">Confirm Delete</div>
-                            <button class="modal-close" onclick="closeSkillModal()">&times;</button>
+                            <button class="modal-close" onclick="closeRecipeModal()">&times;</button>
                         </div>
                         <div class="modal-body">
-                            <p>Are you sure you want to delete the skill <strong>${escapeHtml(skillName)}</strong>?</p>
+                            <p>Are you sure you want to delete the recipe <strong>${escapeHtml(recipeName)}</strong>?</p>
                             <p style="font-size: 14px; color: var(--text-secondary); margin-top: 8px;">This action cannot be undone.</p>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeSkillModal()">Cancel</button>
-                            <button class="btn btn-danger" onclick="deleteSkill('${escapeHtml(skillName)}')">Delete</button>
+                            <button class="btn btn-secondary" onclick="closeRecipeModal()">Cancel</button>
+                            <button class="btn btn-danger" onclick="deleteRecipe('${escapeHtml(recipeName)}')">Delete</button>
                         </div>
                     </div>
                 </div>
             `;
         }
 
-        async function deleteSkill(skillName) {
+        async function deleteRecipe(recipeName) {
             try {
-                const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`, {
+                const response = await fetch(`${API_BASE}/recipes/${encodeURIComponent(recipeName)}`, {
                     method: 'DELETE'
                 });
 
                 if (!response.ok) {
-                    throw new Error(`Failed to delete skill: ${response.statusText}`);
+                    throw new Error(`Failed to delete recipe: ${response.statusText}`);
                 }
 
                 const result = await response.json();
-                closeSkillModal();
+                closeRecipeModal();
 
-                // Refresh the skills list
-                htmx.ajax('GET', '/api/skills', { target: '#content' });
+                // Refresh the recipes list
+                htmx.ajax('GET', '/api/recipes', { target: '#content' });
             } catch (error) {
-                console.error('Failed to delete skill:', error);
-                alert(`Failed to delete skill: ${error.message}`);
+                console.error('Failed to delete recipe:', error);
+                alert(`Failed to delete recipe: ${error.message}`);
             }
         }
 
