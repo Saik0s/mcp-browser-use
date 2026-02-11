@@ -506,14 +506,39 @@ class Recipe:
 
         User params take precedence over defaults.
         """
+        # Normalize common aliases so callers can pass `query` even if the underlying recipe uses `q`,
+        # and vice versa. Same for basic pagination.
+        expected = {p.name for p in self.parameters}
+        normalized_user_params: dict[str, Any] = dict(user_params)
+
+        query_value = None
+        for k in ("query", "q", "term", "search"):
+            if k in user_params:
+                query_value = user_params[k]
+                break
+        if query_value is not None:
+            for k in ("query", "q", "term", "search"):
+                if k in expected and k not in normalized_user_params:
+                    normalized_user_params[k] = query_value
+
+        page_value = user_params.get("page")
+        if page_value is not None and "page" in expected and "page" not in normalized_user_params:
+            normalized_user_params["page"] = page_value
+
+        limit_value = user_params.get("limit")
+        if limit_value is not None:
+            for k in ("limit", "per_page", "page_size"):
+                if k in expected and k not in normalized_user_params:
+                    normalized_user_params[k] = limit_value
+
         merged = {}
         for param in self.parameters:
-            if param.name in user_params:
-                merged[param.name] = user_params[param.name]
+            if param.name in normalized_user_params:
+                merged[param.name] = normalized_user_params[param.name]
             elif param.default is not None:
                 merged[param.name] = param.default
         # Also include any extra user params not in schema
-        for key, value in user_params.items():
+        for key, value in normalized_user_params.items():
             if key not in merged:
                 merged[key] = value
         return merged

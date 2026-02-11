@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_PATTERN = re.compile(r"\{([^}]+)\}")
 _ResponseType = Literal["json", "html", "text"]
+_PUBLIC_PARAMETER_ALLOWLIST = frozenset({"q", "query", "term", "search", "page", "limit"})
 
 
 class _AnalysisRequest(BaseModel):
@@ -76,6 +77,40 @@ def _validate_placeholder_name(name: str) -> bool:
 
 def _extract_placeholders(text: str) -> list[str]:
     return _PLACEHOLDER_PATTERN.findall(text)
+
+
+def _apply_public_parameter_allowlist(
+    url: str,
+    body_template: str | None,
+    parameters: list[RecipeParameter],
+) -> tuple[str, str | None, list[RecipeParameter]]:
+    """Drop non-obvious public parameters, and inline their defaults into templates.
+
+    The analyzer LLM can over-parameterize query params (session ids, tracking, cache-busters)
+    which causes wrong query terms at runtime. v1 policy:
+    - Keep only a small allowlist of "obvious" public params.
+    - For removed params, inline their `default` values into URL/body templates if provided.
+    - If a removed param has no default but is referenced by a placeholder, keep it to avoid breaking execution.
+    """
+
+    kept: list[RecipeParameter] = []
+    for p in parameters:
+        if p.name in _PUBLIC_PARAMETER_ALLOWLIST:
+            kept.append(p)
+            continue
+
+        placeholder = f"{{{p.name}}}"
+        referenced = placeholder in url or (body_template is not None and placeholder in body_template)
+        if p.default is not None:
+            url = url.replace(placeholder, p.default)
+            if body_template is not None:
+                body_template = body_template.replace(placeholder, p.default)
+            continue
+
+        if referenced:
+            kept.append(p)
+
+    return url, body_template, kept
 
 
 def _normalize_response_type(value: str) -> _ResponseType:
@@ -290,25 +325,6 @@ class RecipeAnalyzer:
         Returns:
             Recipe object with direct execution support if possible
         """
-        # Build RecipeRequest for direct execution
-        request_data = analysis.request
-        recipe_request = None
-        if request_data and request_data.url:
-            url = request_data.url
-            host = urlparse(url).hostname
-            allowed = [host] if host else []
-            recipe_request = RecipeRequest(
-                url=url,
-                method=request_data.method,
-                headers=request_data.headers,
-                body_template=request_data.body_template,
-                response_type=_normalize_response_type(request_data.response_type),
-                extract_path=request_data.extract_path,
-                html_selectors=request_data.html_selectors,
-                allowed_domains=allowed,
-            )
-            logger.info(f"Built RecipeRequest for direct execution: {recipe_request.url}")
-
         # NEW: Build AuthRecovery if provided
         auth_data = analysis.auth_recovery
         auth_recovery = None
@@ -320,9 +336,9 @@ class RecipeAnalyzer:
                 success_indicator=auth_data.success_indicator,
             )
 
-        # Build parameters from top-level or nested in request
+        # Build parameters from analysis output.
         parameters_data = analysis.parameters
-        parameters = []
+        parameters: list[RecipeParameter] = []
         for p in parameters_data:
             parameters.append(
                 RecipeParameter(
@@ -333,6 +349,29 @@ class RecipeAnalyzer:
                     description=p.description,
                 )
             )
+
+        # Build RecipeRequest for direct execution (post-process templates/params first).
+        request_data = analysis.request
+        recipe_request = None
+        if request_data and request_data.url:
+            url, body_template, parameters = _apply_public_parameter_allowlist(
+                request_data.url,
+                request_data.body_template,
+                parameters,
+            )
+            host = urlparse(url).hostname
+            allowed = [host] if host else []
+            recipe_request = RecipeRequest(
+                url=url,
+                method=request_data.method,
+                headers=request_data.headers,
+                body_template=body_template,
+                response_type=_normalize_response_type(request_data.response_type),
+                extract_path=request_data.extract_path,
+                html_selectors=request_data.html_selectors,
+                allowed_domains=allowed,
+            )
+            logger.info(f"Built RecipeRequest for direct execution: {recipe_request.url}")
 
         # LEGACY: Build money_request for backward compatibility
         money_request_data = {}  # Analyzer prompt no longer emits this field.
