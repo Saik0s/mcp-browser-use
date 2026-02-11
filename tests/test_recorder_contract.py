@@ -116,6 +116,42 @@ async def test_recorder_contract_captures_required_fields_for_json_api() -> None
 
 
 @pytest.mark.asyncio
+async def test_recorder_captures_text_plain_api_response_body() -> None:
+    recorder = RecipeRecorder(task="t")
+    await recorder.attach(_DummyBrowserSession({"body": "hello world", "base64Encoded": False}))
+
+    recorder._on_request_will_be_sent(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "documentURL": "https://example.com/page",
+            "request": {"url": "https://api.example.com/v1/search?q=x", "method": "GET", "headers": {}},
+        },
+        session_id=None,
+    )
+    recorder._on_response_received(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "response": {
+                "url": "https://api.example.com/v1/search?q=x",
+                "status": 200,
+                "headers": {"Content-Type": "text/plain; charset=utf-8"},
+                "mimeType": "text/plain",
+            },
+        },
+        session_id=None,
+    )
+
+    await recorder.finalize()
+    recording = recorder.get_recording(result="ok")
+    resp = recording.responses[0]
+
+    assert resp.body == "hello world"
+    assert resp.json_key_sample is None
+
+
+@pytest.mark.asyncio
 async def test_recorder_body_cap_32kb() -> None:
     recorder = RecipeRecorder(task="t")
 

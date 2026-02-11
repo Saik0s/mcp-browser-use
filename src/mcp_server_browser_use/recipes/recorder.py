@@ -648,11 +648,14 @@ class RecipeRecorder:
             self._responses.append(network_response)
             self._cdp_to_response[request_id] = network_response
 
-            # Schedule body capture for API calls (XHR/Fetch with JSON content)
-            # Also capture document loads that return JSON (direct API navigation)
-            should_consider = resource_type in ("xhr", "fetch", "document")
-            if should_consider and is_jsonish:
-                task = asyncio.create_task(
+            # Schedule body capture for API calls.
+            #
+            # Previously we captured only JSON-ish responses, but some APIs return useful data as
+            # text/plain (or other non-JSON types). We still enforce contracts in _capture_body_cdp:
+            # no raw binary (base64) and never persist HTML bodies.
+            should_capture_body = resource_type in ("xhr", "fetch") or (resource_type == "document" and is_jsonish)
+            if should_capture_body:
+                task = asyncio.get_running_loop().create_task(
                     self._capture_body_cdp(request_id, network_response, session_id),
                     name=f"capture_body_{request_id[:8]}",
                 )
