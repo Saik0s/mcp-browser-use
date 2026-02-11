@@ -15,6 +15,7 @@ with browser-use's CDP client for network event capture.
 """
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -322,6 +323,24 @@ def _is_jsonish_content_type(*, mime_type: str, content_type_header: str | None)
     return False
 
 
+_TEXT_CAPTURE_CONTENT_TYPES = frozenset(
+    {
+        "text/plain",
+        "text/csv",
+        "text/tab-separated-values",
+    }
+)
+
+
+def _is_text_capture_content_type(*, mime_type: str, content_type_header: str | None) -> bool:
+    tokens: list[str] = []
+    if mime_type:
+        tokens.append(_normalize_content_type_token(mime_type))
+    if content_type_header:
+        tokens.append(_normalize_content_type_token(content_type_header))
+    return any(token in _TEXT_CAPTURE_CONTENT_TYPES for token in tokens)
+
+
 def _sanitize_post_key_name(key: str) -> str:
     kl = key.lower()
     for sub in _SENSITIVE_POST_KEYS:
@@ -336,7 +355,6 @@ def _post_data_summary(post_data: str | None, *, content_type: str | None) -> st
     if not post_data:
         return None
 
-    import json
     from urllib.parse import parse_qsl
 
     ct = (content_type or "").lower()
@@ -348,8 +366,8 @@ def _post_data_summary(post_data: str | None, *, content_type: str | None) -> st
     # JSON bodies: keep only key structure.
     if "application/json" in ct or post_data.lstrip().startswith(("{", "[")):
         try:
-            parsed: object = json.loads(post_data)
-        except Exception:
+            parsed: object = json.JSONDecoder().decode(post_data)
+        except json.JSONDecodeError:
             return finish(f"json bytes={size_bytes} (parse_error)")
 
         if isinstance(parsed, dict):
@@ -381,8 +399,6 @@ def _json_key_sample(body: str, *, max_chars: int = 200) -> str | None:
     - Try json.loads and walk keys into dot paths (stable signal).
     - If that fails (partial/truncated/invalid JSON), fall back to regex `"key":` scanning.
     """
-    import json
-
     def emit_paths(value: object, prefix: str, out: list[str], budget: int) -> None:
         if budget <= 0:
             return
@@ -404,14 +420,14 @@ def _json_key_sample(body: str, *, max_chars: int = 200) -> str | None:
                     return
 
     try:
-        parsed = json.loads(body)
+        parsed = json.JSONDecoder().decode(body)
         paths: list[str] = []
         emit_paths(parsed, "", paths, max_chars)
         if not paths:
             return None
         sample = ",".join(paths)
         return sample[:max_chars]
-    except Exception:
+    except json.JSONDecodeError:
         keys: list[str] = []
         for m in _JSON_KEY_RE.finditer(body[:MAX_BODY_SIZE]):
             key = m.group(1)
@@ -648,13 +664,14 @@ class RecipeRecorder:
             self._responses.append(network_response)
             self._cdp_to_response[request_id] = network_response
 
-            # Schedule body capture for API calls (XHR/Fetch with JSON content)
-            # Also capture document loads that return JSON (direct API navigation)
+            # Schedule body capture for API calls (XHR/Fetch) and document loads used as APIs.
+            # Contract: never persist raw binary, and never persist HTML bodies.
             should_consider = resource_type in ("xhr", "fetch", "document")
-            if should_consider and is_jsonish:
-                task = asyncio.create_task(
+            is_text_capture = _is_text_capture_content_type(mime_type=mime_type, content_type_header=content_type_header)
+            if should_consider and (is_jsonish or is_text_capture):
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(
                     self._capture_body_cdp(request_id, network_response, session_id),
-                    name=f"capture_body_{request_id[:8]}",
                 )
                 self._pending_tasks.add(task)
                 task.add_done_callback(lambda t: self._pending_tasks.discard(t))

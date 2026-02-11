@@ -350,6 +350,31 @@ async def test_recorder_capture_gate_uses_response_content_type_header() -> None
 
 
 @pytest.mark.asyncio
+async def test_recorder_persists_text_plain_response_body_for_xhr() -> None:
+    recorder = RecipeRecorder(task="t")
+    await recorder.attach(_DummyBrowserSession({"body": "hello world", "base64Encoded": False}))
+
+    recorder._on_request_will_be_sent(
+        {"requestId": "1", "type": "XHR", "documentURL": "https://example.com/page", "request": {"url": "https://x", "method": "GET", "headers": {}}},
+        session_id=None,
+    )
+    recorder._on_response_received(
+        {
+            "requestId": "1",
+            "type": "XHR",
+            "response": {"url": "https://x", "status": 200, "headers": {"Content-Type": "text/plain; charset=utf-8"}, "mimeType": "text/plain"},
+        },
+        session_id=None,
+    )
+
+    await recorder.finalize()
+    recording = recorder.get_recording(result="ok")
+    resp = recording.responses[0]
+    assert resp.body == "hello world"
+    assert resp.json_key_sample is None
+
+
+@pytest.mark.asyncio
 async def test_recorder_sanitizes_url_and_redacts_post_data() -> None:
     recorder = RecipeRecorder(task="t")
     await recorder.attach(_DummyBrowserSession({"body": '{"ok": true}', "base64Encoded": False}))
