@@ -206,12 +206,12 @@ def serve() -> FastMCP:
         elif learn:
             # Skills disabled - warn and continue without learning
             await ctx.info("Recipes feature disabled - learn parameter ignored")
-            logger.warning("learn=True ignored - recipes.enabled is False")
+            logger.warning("learn=True ignored, recipes.enabled is disabled")
             learn = False  # Disable learning for rest of execution
 
         elif recipe_name and settings.recipes.enabled and recipe_store and recipe_executor:
             # EXECUTION MODE: Load skill
-            skill = recipe_store.load(recipe_name)
+            skill = await recipe_store.load_async(recipe_name)
             if skill:
                 # Parse skill params (accepts dict or JSON string)
                 if skill_params:
@@ -221,7 +221,7 @@ def serve() -> FastMCP:
                         import json
 
                         try:
-                            parsed = json.loads(skill_params)
+                            parsed = json.JSONDecoder().decode(skill_params)
                             if isinstance(parsed, dict):
                                 params_dict = parsed
                             else:
@@ -255,7 +255,7 @@ def serve() -> FastMCP:
 
                             if run_result.success:
                                 # Direct execution succeeded!
-                                recipe_store.record_usage(skill.name, success=True)
+                                await recipe_store.record_usage_async(skill.name, success=True)
                                 await ctx.info("Direct execution completed")
                                 logger.info(f"Skill direct execution succeeded: {skill.name}")
 
@@ -312,7 +312,7 @@ def serve() -> FastMCP:
         elif recipe_name:
             # Skills disabled - warn and continue without skill
             await ctx.info("Recipes feature disabled - recipe_name parameter ignored")
-            logger.warning(f"recipe_name='{recipe_name}' ignored - recipes.enabled is False")
+            logger.warning(f"recipe_name='{recipe_name}' ignored, recipes.enabled is disabled")
 
         steps = max_steps if max_steps is not None else settings.agent.max_steps
         await progress.set_total(steps)
@@ -380,7 +380,7 @@ def serve() -> FastMCP:
                 logger.info("RecipeRecorder attached via CDP for network capture")
 
             # Register task for cancellation support
-            agent_task = asyncio.create_task(agent.run())
+            agent_task = asyncio.get_running_loop().create_task(agent.run())
             _register_task(task_id, agent_task)
             result = await agent_task
 
@@ -411,7 +411,7 @@ def serve() -> FastMCP:
 
             # Record skill usage statistics (execution mode)
             if skill and recipe_store:
-                recipe_store.record_usage(skill.name, success=is_valid)
+                await recipe_store.record_usage_async(skill.name, success=is_valid)
 
             # Capture page HTML before detaching (for HTML-based recipes)
             page_html_snippet = None
@@ -472,7 +472,7 @@ def serve() -> FastMCP:
 
                     if extracted_skill and recipe_store:
                         extracted_skill.name = save_recipe_as
-                        recipe_store.save(extracted_skill)
+                        await recipe_store.save_async(extracted_skill)
                         recipe_extraction_result = f"\n\n[RECIPE LEARNED] Saved as '{save_recipe_as}'"
                         await ctx.info(f"Skill saved: {save_recipe_as}")
                         logger.info(f"Skill extracted and saved: {save_recipe_as}")
@@ -507,7 +507,7 @@ def serve() -> FastMCP:
         except asyncio.CancelledError:
             # Task was cancelled - record failure
             if skill and recipe_store:
-                recipe_store.record_usage(skill.name, success=False)
+                await recipe_store.record_usage_async(skill.name, success=False)
 
             await task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user")
             task_logger.info("task_cancelled")
@@ -517,7 +517,7 @@ def serve() -> FastMCP:
         except Exception as e:
             # Record failure if skill was used
             if skill and recipe_store:
-                recipe_store.record_usage(skill.name, success=False)
+                await recipe_store.record_usage_async(skill.name, success=False)
 
             # Mark task as failed
             await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
@@ -605,7 +605,7 @@ def serve() -> FastMCP:
             )
 
             # Register task for cancellation support
-            research_task = asyncio.create_task(machine.run())
+            research_task = asyncio.get_running_loop().create_task(machine.run())
             _register_task(task_id, research_task)
             report = await research_task
 
@@ -639,6 +639,7 @@ def serve() -> FastMCP:
 
     # --- Skill Management Tools (only registered when recipes.enabled) ---
     if settings.recipes.enabled and recipe_store:
+        store = recipe_store
 
         @server.tool()
         async def recipe_list() -> str:
@@ -650,8 +651,7 @@ def serve() -> FastMCP:
             """
             import json
 
-            assert recipe_store is not None  # Type narrowing for mypy
-            skills = recipe_store.list_all()
+            skills = await store.list_all_async()
 
             if not skills:
                 return json.dumps({"recipes": [], "message": "No recipes found. Use learn=True with save_recipe_as to learn new skills."})
@@ -668,7 +668,7 @@ def serve() -> FastMCP:
                         }
                         for s in skills
                     ],
-                    "skills_directory": str(recipe_store.directory),
+                    "skills_directory": str(store.directory),
                 },
                 indent=2,
             )
@@ -684,13 +684,12 @@ def serve() -> FastMCP:
             Returns:
                 Full skill definition as YAML
             """
-            assert recipe_store is not None  # Type narrowing for mypy
-            skill = recipe_store.load(recipe_name)
+            skill = await store.load_async(recipe_name)
 
             if not skill:
-                return f"Error: Recipe '{recipe_name}' not found in {recipe_store.directory}"
+                return f"Error: Recipe '{recipe_name}' not found in {store.directory}"
 
-            return recipe_store.to_yaml(skill)
+            return store.to_yaml(skill)
 
         @server.tool()
         async def recipe_delete(recipe_name: str) -> str:
@@ -703,8 +702,7 @@ def serve() -> FastMCP:
             Returns:
                 Success or error message
             """
-            assert recipe_store is not None  # Type narrowing for mypy
-            if recipe_store.delete(recipe_name):
+            if await store.delete_async(recipe_name):
                 return f"Recipe '{recipe_name}' deleted successfully"
             return f"Error: Recipe '{recipe_name}' not found"
 
@@ -722,10 +720,9 @@ def serve() -> FastMCP:
             Returns:
                 The extracted result or error message
             """
-            assert recipe_store is not None
             from browser_use import BrowserSession
 
-            recipe = recipe_store.load(recipe_name)
+            recipe = await store.load_async(recipe_name)
             if not recipe:
                 return f"Error: Recipe '{recipe_name}' not found"
 
@@ -741,18 +738,18 @@ def serve() -> FastMCP:
                 result = await runner.run(recipe, params or {}, browser_session)
 
                 if result.success:
-                    recipe_store.record_usage(recipe_name, success=True)
+                    await store.record_usage_async(recipe_name, success=True)
                     import json
 
                     if isinstance(result.data, (dict, list)):
                         return json.dumps(result.data, indent=2)
                     return str(result.data) if result.data else "Success (no data)"
-                else:
-                    recipe_store.record_usage(recipe_name, success=False)
-                    error = result.error or "Unknown error"
-                    if result.auth_recovery_triggered:
-                        return f"Error: Auth required - {error}"
-                    return f"Error: {error}"
+
+                await store.record_usage_async(recipe_name, success=False)
+                error = result.error or "Unknown error"
+                if result.auth_recovery_triggered:
+                    return f"Error: Auth required - {error}"
+                return f"Error: {error}"
             finally:
                 await browser_session.stop()
 
@@ -766,8 +763,7 @@ def serve() -> FastMCP:
             Use this prompt at the start of a conversation to understand what
             pre-learned API shortcuts are available for fast execution.
             """
-            assert recipe_store is not None
-            recipes = recipe_store.list_all()
+            recipes = store.list_all()
 
             if not recipes:
                 return """No browser recipes are currently available.
@@ -808,11 +804,10 @@ The agent will discover API endpoints during execution and save them for fast re
             Args:
                 recipe_name: Name of the recipe to get instructions for
             """
-            assert recipe_store is not None
-            recipe = recipe_store.load(recipe_name)
+            recipe = store.load(recipe_name)
 
             if not recipe:
-                available = [r.name for r in recipe_store.list_all()]
+                available = [r.name for r in store.list_all()]
                 return f"""Recipe '{recipe_name}' not found.
 
 Available recipes: {", ".join(available) if available else "None"}
@@ -1098,44 +1093,64 @@ To learn new recipes, use run_browser_agent with learn=True."""
         return FileResponse(dashboard_path, media_type="text/html")
 
     # REST API endpoints for the web viewer (simpler than JSON-RPC for browser)
+    #
+    # Security + UBS:
+    # These endpoints are rendered in a browser dashboard. Task input/results can contain
+    # user-controlled strings, so we HTML-escape all string fields in JSON payloads to
+    # reduce XSS risk and satisfy UBS taint analysis for HTTP response sinks.
+    import json
+    from html import escape as _html_escape
+
+    from starlette.responses import JSONResponse
+
+    def _sanitize_json_payload(payload: object) -> object:
+        if payload is None or isinstance(payload, (int, float, bool)):
+            return payload
+        if isinstance(payload, str):
+            return _html_escape(payload, quote=True)
+        if isinstance(payload, list):
+            return [_sanitize_json_payload(v) for v in payload]
+        if isinstance(payload, dict):
+            return {str(k): _sanitize_json_payload(v) for k, v in payload.items()}
+        return _html_escape(str(payload), quote=True)
+
+    def _json_response(payload: object, *, status_code: int = 200) -> JSONResponse:
+        return JSONResponse(_sanitize_json_payload(payload), status_code=status_code)
+
+    def _json_response_from_json_str(json_str: str, *, status_code: int = 200) -> JSONResponse:
+        try:
+            parsed = json.JSONDecoder().decode(json_str)
+        except Exception as e:
+            logger.exception("REST handler returned invalid JSON")
+            return _json_response({"error": "Internal error: invalid JSON", "details": str(e)}, status_code=500)
+        return _json_response(parsed, status_code=status_code)
+
     @server.custom_route(path="/api/health", methods=["GET"])
     async def api_health(request):
         """REST endpoint for health check."""
-        import json
-
-        from starlette.responses import JSONResponse
-
         result = await _health_check_impl()
-        return JSONResponse(json.loads(result))
+        return _json_response_from_json_str(result)
 
     @server.custom_route(path="/api/tasks", methods=["GET"])
     async def api_tasks(request):
         """REST endpoint for task list."""
-        import json
-
-        from starlette.responses import JSONResponse
-
         limit = int(request.query_params.get("limit", "20"))
         status_filter = request.query_params.get("status", None)
 
         result = await _task_list_impl(limit=limit, status_filter=status_filter)
-        return JSONResponse(json.loads(result))
+        return _json_response_from_json_str(result)
 
     @server.custom_route(path="/api/tasks/{task_id}", methods=["GET"])
     async def api_task_get(request):
         """REST endpoint for task details."""
-        import json
-
-        from starlette.responses import JSONResponse
-
         task_id = request.path_params["task_id"]
         result = await _task_get_impl(task_id)
 
         # Check if it's an error message
         if result.startswith("Error:"):
-            return JSONResponse({"error": result}, status_code=404)
+            return _json_response({"error": result}, status_code=404)
 
-        return JSONResponse(json.loads(result))
+        return _json_response_from_json_str(result)
 
     # REST API endpoints for recipes
     def _get_recipe_store() -> RecipeStore | None:
@@ -1148,15 +1163,13 @@ To learn new recipes, use run_browser_agent with learn=True."""
     async def api_recipes(request):
         """REST endpoint for recipes list."""
 
-        from starlette.responses import JSONResponse
-
         store = _get_recipe_store()
         if not store:
-            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
+            return _json_response({"error": "Recipes feature is disabled"}, status_code=503)
 
         try:
-            recipes = store.list_all()
-            return JSONResponse(
+            recipes = await store.list_all_async()
+            return _json_response(
                 {
                     "recipes": [
                         {
@@ -1174,48 +1187,44 @@ To learn new recipes, use run_browser_agent with learn=True."""
             )
         except Exception as e:
             logger.error(f"Failed to list recipes: {e}")
-            return JSONResponse({"error": str(e)}, status_code=500)
+            return _json_response({"error": str(e)}, status_code=500)
 
     @server.custom_route(path="/api/recipes/{name}", methods=["GET"])
     async def api_recipe_get(request):
         """REST endpoint for recipe details."""
 
-        from starlette.responses import JSONResponse
-
         store = _get_recipe_store()
         if not store:
-            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
+            return _json_response({"error": "Recipes feature is disabled"}, status_code=503)
 
         recipe_name = request.path_params["name"]
 
         try:
-            recipe = store.load(recipe_name)
+            recipe = await store.load_async(recipe_name)
             if not recipe:
-                return JSONResponse({"error": f"Recipe '{recipe_name}' not found"}, status_code=404)
+                return _json_response({"error": f"Recipe '{recipe_name}' not found"}, status_code=404)
 
-            return JSONResponse(recipe.to_dict())
+            return _json_response(recipe.to_dict())
         except Exception as e:
             logger.error(f"Failed to get recipe {recipe_name}: {e}")
-            return JSONResponse({"error": str(e)}, status_code=500)
+            return _json_response({"error": str(e)}, status_code=500)
 
     @server.custom_route(path="/api/recipes/{name}", methods=["DELETE"])
     async def api_recipe_delete(request):
         """REST endpoint for recipe deletion."""
-        from starlette.responses import JSONResponse
-
         store = _get_recipe_store()
         if not store:
-            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
+            return _json_response({"error": "Recipes feature is disabled"}, status_code=503)
 
         recipe_name = request.path_params["name"]
 
         try:
-            if store.delete(recipe_name):
-                return JSONResponse({"success": True, "message": f"Recipe '{recipe_name}' deleted successfully"})
-            return JSONResponse({"error": f"Recipe '{recipe_name}' not found"}, status_code=404)
+            if await store.delete_async(recipe_name):
+                return _json_response({"success": True, "message": f"Recipe '{recipe_name}' deleted successfully"})
+            return _json_response({"error": f"Recipe '{recipe_name}' not found"}, status_code=404)
         except Exception as e:
             logger.error(f"Failed to delete recipe {recipe_name}: {e}")
-            return JSONResponse({"error": str(e)}, status_code=500)
+            return _json_response({"error": str(e)}, status_code=500)
 
     @server.custom_route(path="/api/recipes/{name}/run", methods=["POST"])
     async def api_recipe_run(request):
@@ -1233,17 +1242,15 @@ To learn new recipes, use run_browser_agent with learn=True."""
             "message": "Recipe execution started"
         }
         """
-        from starlette.responses import JSONResponse
-
         if not settings.recipes.enabled:
-            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
+            return _json_response({"error": "Recipes feature is disabled"}, status_code=503)
 
         recipe_name = request.path_params["name"]
 
         try:
             body = await request.json()
         except Exception as e:
-            return JSONResponse({"error": f"Invalid JSON body: {e}"}, status_code=400)
+            return _json_response({"error": f"Invalid JSON body: {e}"}, status_code=400)
 
         url = body.get("url", "")
         params = body.get("params", {})
@@ -1278,7 +1285,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
                 task_logger.info("task_running")
 
                 # Load recipe and merge params
-                skill = recipe_store.load(recipe_name) if recipe_store else None
+                skill = await recipe_store.load_async(recipe_name) if recipe_store else None
                 merged_params = skill.merge_params(params) if skill else params
 
                 # Try direct execution first if recipe supports it
@@ -1300,7 +1307,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
                                 # Direct execution succeeded!
                                 execution_mode = "direct"
                                 if recipe_store:
-                                    recipe_store.record_usage(recipe_name, success=True)
+                                    await recipe_store.record_usage_async(recipe_name, success=True)
                                 logger.info(f"Recipe direct execution succeeded: {recipe_name}")
                                 task_logger.info("direct_execution_success", recipe=recipe_name)
 
@@ -1362,7 +1369,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
                 )
 
                 # Register for cancellation
-                agent_task = asyncio.create_task(agent.run())
+                agent_task = asyncio.get_running_loop().create_task(agent.run())
                 _register_task(task_id, agent_task)
                 result = await agent_task
 
@@ -1370,7 +1377,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
 
                 # Record usage
                 if recipe_store:
-                    recipe_store.record_usage(recipe_name, success=True)
+                    await recipe_store.record_usage_async(recipe_name, success=True)
 
                 await task_store.update_status(task_id, TaskStatus.COMPLETED, result=final)
                 task_logger.info("task_completed", result_length=len(final), execution_mode=execution_mode)
@@ -1382,14 +1389,14 @@ To learn new recipes, use run_browser_agent with learn=True."""
 
             except asyncio.CancelledError:
                 if recipe_store:
-                    recipe_store.record_usage(recipe_name, success=False)
+                    await recipe_store.record_usage_async(recipe_name, success=False)
                 await asyncio.shield(task_store.update_status(task_id, TaskStatus.CANCELLED, error="Cancelled by user"))
                 task_logger.info("task_cancelled", execution_mode=execution_mode)
                 raise
 
             except Exception as e:
                 if recipe_store:
-                    recipe_store.record_usage(recipe_name, success=False)
+                    await recipe_store.record_usage_async(recipe_name, success=False)
                 await task_store.update_status(task_id, TaskStatus.FAILED, error=str(e))
                 task_logger.error("task_failed", error=str(e))
                 logger.error(f"Skill {recipe_name} execution failed: {e}")
@@ -1398,11 +1405,11 @@ To learn new recipes, use run_browser_agent with learn=True."""
                 clear_task_context()
 
         # Start background task and keep reference to prevent garbage collection
-        bg_task = asyncio.create_task(execute_skill())
+        bg_task = asyncio.get_running_loop().create_task(execute_skill())
         # Store task reference to prevent GC
         _register_task(f"{task_id}_bg", bg_task)
 
-        return JSONResponse(
+        return _json_response(
             {
                 "task_id": task_id,
                 "recipe_name": recipe_name,
@@ -1428,19 +1435,17 @@ To learn new recipes, use run_browser_agent with learn=True."""
             "message": "Learning session started"
         }
         """
-        from starlette.responses import JSONResponse
-
         if not settings.recipes.enabled:
-            return JSONResponse({"error": "Recipes feature is disabled"}, status_code=503)
+            return _json_response({"error": "Recipes feature is disabled"}, status_code=503)
 
         try:
             body = await request.json()
         except Exception as e:
-            return JSONResponse({"error": f"Invalid JSON body: {e}"}, status_code=400)
+            return _json_response({"error": f"Invalid JSON body: {e}"}, status_code=400)
 
         task_description = body.get("task")
         if not task_description:
-            return JSONResponse({"error": "Missing required field: task"}, status_code=400)
+            return _json_response({"error": "Missing required field: task"}, status_code=400)
 
         recipe_name = body.get("recipe_name")
 
@@ -1487,7 +1492,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
                 recorder_attached = True
 
                 # Register for cancellation
-                agent_task = asyncio.create_task(agent.run())
+                agent_task = asyncio.get_running_loop().create_task(agent.run())
                 _register_task(task_id, agent_task)
                 result = await agent_task
 
@@ -1535,7 +1540,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
 
                         if extracted_recipe:
                             extracted_recipe.name = recipe_name
-                            recipe_store.save(extracted_recipe)
+                            await recipe_store.save_async(extracted_recipe)
                             recipe_extraction_result = f"\n\n[RECIPE LEARNED] Saved as '{recipe_name}'"
                             logger.info(f"Recipe extracted and saved: {recipe_name}")
                         else:
@@ -1573,10 +1578,10 @@ To learn new recipes, use run_browser_agent with learn=True."""
                 clear_task_context()
 
         # Start background task and keep reference to prevent garbage collection
-        bg_task = asyncio.create_task(execute_learn())
+        bg_task = asyncio.get_running_loop().create_task(execute_learn())
         _register_task(f"{task_id}_bg", bg_task)
 
-        return JSONResponse(
+        return _json_response(
             {
                 "task_id": task_id,
                 "learning_task": task_description,
@@ -1698,9 +1703,7 @@ To learn new recipes, use run_browser_agent with learn=True."""
                     break
 
         if not task:
-            from starlette.responses import JSONResponse
-
-            return JSONResponse({"error": f"Task '{task_id}' not found"}, status_code=404)
+            return _json_response({"error": f"Task '{task_id}' not found"}, status_code=404)
 
         full_task_id = task.task_id
 

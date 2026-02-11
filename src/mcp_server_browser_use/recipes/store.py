@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
+from anyio import to_thread
 
 from .models import Recipe
 
@@ -177,6 +178,10 @@ class RecipeStore:
             logger.error(f"Invalid recipe definition in {path}: {e}")
             return None
 
+    async def load_async(self, name: str) -> Recipe | None:
+        """Async wrapper for load() to avoid blocking the event loop."""
+        return await to_thread.run_sync(self.load, name)
+
     def save(self, recipe: Recipe, *, overwrite: bool = False) -> Path:
         """Save a recipe to file.
 
@@ -205,6 +210,10 @@ class RecipeStore:
         logger.info(f"Saved recipe: {recipe.name} to {path}")
         return path
 
+    async def save_async(self, recipe: Recipe, *, overwrite: bool = False) -> Path:
+        """Async wrapper for save() to avoid blocking the event loop."""
+        return await to_thread.run_sync(self.save, recipe, overwrite=overwrite)
+
     def delete(self, name: str) -> bool:
         """Delete a recipe by name.
 
@@ -222,6 +231,10 @@ class RecipeStore:
         path.unlink()
         logger.info(f"Deleted recipe: {name}")
         return True
+
+    async def delete_async(self, name: str) -> bool:
+        """Async wrapper for delete() to avoid blocking the event loop."""
+        return await to_thread.run_sync(self.delete, name)
 
     def list_all(self) -> list[Recipe]:
         """List all available recipes.
@@ -245,6 +258,10 @@ class RecipeStore:
 
         return sorted(recipes, key=lambda r: r.name)
 
+    async def list_all_async(self) -> list[Recipe]:
+        """Async wrapper for list_all() to avoid blocking the event loop."""
+        return await to_thread.run_sync(self.list_all)
+
     def exists(self, name: str) -> bool:
         """Check if a recipe exists.
 
@@ -255,6 +272,10 @@ class RecipeStore:
             True if recipe exists
         """
         return self._recipe_path(name).exists()
+
+    async def exists_async(self, name: str) -> bool:
+        """Async wrapper for exists() to avoid blocking the event loop."""
+        return await to_thread.run_sync(self.exists, name)
 
     def record_usage(self, name: str, success: bool) -> None:
         """Record recipe usage statistics.
@@ -274,6 +295,10 @@ class RecipeStore:
             recipe.failure_count += 1
 
         self.save(recipe, overwrite=True)
+
+    async def record_usage_async(self, name: str, success: bool) -> None:
+        """Async wrapper for record_usage() to avoid blocking the event loop."""
+        await to_thread.run_sync(self.record_usage, name, success)
 
     def to_yaml(self, recipe: Recipe) -> str:
         """Convert recipe to YAML string.
