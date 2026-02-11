@@ -12,6 +12,8 @@
 
 Build a comprehensive library of 150+ browser automation skills for mcp-browser-use, covering 8 service categories. This transforms the existing skill system from a "learn one skill at a time" tool into a production-ready skills marketplace.
 
+**Terminology note (2026-02):** In the current codebase, **skills were renamed to recipes**. Read all "skill" mentions as "recipe", and prefer CLI commands like `mcp-server-browser-use recipe ...`.
+
 **Key deliverables:**
 1. Skill manifest format with `example_params` for unattended batch learning
 2. Batch skill creation pipeline with resume capability
@@ -88,7 +90,7 @@ Handle services requiring special handling:
 
 #### 0. BLOCKER: Fix URL Encoding Bug First
 
-**File**: `src/mcp_server_browser_use/skills/runner.py`
+**File**: `src/mcp_server_browser_use/recipes/runner.py`
 
 Before scaling to 150+ skills, fix the inconsistent URL encoding:
 - `build_url()` function uses one encoding approach
@@ -116,7 +118,7 @@ def build_url(template: str, params: dict, encode: bool = True) -> str:
 #### 1. Extend Skill Model (`models.py`)
 
 ```python
-# src/mcp_server_browser_use/skills/models.py
+# src/mcp_server_browser_use/recipes/models.py
 
 @dataclass
 class SkillAuth:
@@ -159,7 +161,7 @@ class Skill:
 Without concrete param values, the agent cannot execute the task autonomously.
 
 ```yaml
-# examples/skills/manifest.yaml
+# examples/recipes/manifest.yaml
 
 version: 1
 defaults:
@@ -244,7 +246,7 @@ categories:
 #### 3. Batch Learning Pipeline
 
 ```python
-# src/mcp_server_browser_use/skills/batch.py
+# src/mcp_server_browser_use/recipes/batch.py
 
 @dataclass
 class BatchLearningResult:
@@ -308,7 +310,7 @@ VCR intercepts Python HTTP requests, but browser fetch bypasses Python entirely.
 **Solution:** Replay fixtures that test the parsing/extraction logic, not network calls.
 
 ```python
-# src/mcp_server_browser_use/skills/verifier.py
+# src/mcp_server_browser_use/recipes/verifier.py
 
 @dataclass
 class VerificationResult:
@@ -318,8 +320,8 @@ class VerificationResult:
     output_matches_schema: bool
     error: str | None = None
 
-class SkillVerifier:
-    """Verify skills against recorded response fixtures."""
+class RecipeVerifier:
+    """Verify recipes against recorded response fixtures."""
     
     def __init__(self, fixtures_dir: Path):
         self.fixtures_dir = fixtures_dir
@@ -380,10 +382,10 @@ def replay_fixture():
     return _load
 
 @pytest.fixture
-def skill_verifier():
+def recipe_verifier():
     """Verifier instance for testing."""
-    from mcp_server_browser_use.skills.verifier import SkillVerifier
-    return SkillVerifier(FIXTURES_DIR / "responses")
+    from mcp_server_browser_use.recipes.verifier import RecipeVerifier
+    return RecipeVerifier(FIXTURES_DIR / "responses")
 ```
 
 ```
@@ -396,15 +398,15 @@ tests/
 │   │   └── jobs/
 │   │       └── remoteok-jobs.json
 │   └── conftest.py
-├── test_skills_replay.py    # Replay-based verification tests
-└── test_skills_batch.py     # Batch learning tests
+├── test_recipes_replay.py    # Replay-based verification tests
+└── test_recipes_batch.py     # Batch learning tests
 ```
 
 **Recording Fixtures:**
-After learning a skill, save the raw API response:
+After learning a recipe, save the raw API response:
 ```bash
 # During batch learning, save responses
-mcp-server-browser-use skills learn-batch --save-fixtures tests/fixtures/responses/
+mcp-server-browser-use recipe learn-batch --save-fixtures tests/fixtures/responses/
 ```
 
 ---
@@ -417,7 +419,7 @@ mcp-server-browser-use skills learn-batch --save-fixtures tests/fixtures/respons
 
 #### 0.1 Fix URL Encoding Bug
 
-**File**: `src/mcp_server_browser_use/skills/runner.py`
+**File**: `src/mcp_server_browser_use/recipes/runner.py`
 
 - [ ] **P0**: Audit `build_url()` function vs `SkillRequest.build_url()` method
 - [ ] Unify to single URL building function with consistent encoding
@@ -426,7 +428,7 @@ mcp-server-browser-use skills learn-batch --save-fixtures tests/fixtures/respons
 
 #### 0.2 Add Response Size Cap
 
-**File**: `src/mcp_server_browser_use/skills/runner.py`
+**File**: `src/mcp_server_browser_use/recipes/runner.py`
 
 - [ ] Add `MAX_RESPONSE_SIZE = 1_000_000` (1MB) constant
 - [ ] Truncate response in JS fetch before returning to Python
@@ -438,7 +440,7 @@ mcp-server-browser-use skills learn-batch --save-fixtures tests/fixtures/respons
 
 #### 1.1 Extend Skill Model
 
-**File**: `src/mcp_server_browser_use/skills/models.py`
+**File**: `src/mcp_server_browser_use/recipes/models.py`
 
 ```python
 # Add SkillAuth for API-key skills
@@ -474,7 +476,7 @@ max_response_size_bytes: int = 1_000_000
 
 #### 1.2 Create Skill Manifest Schema
 
-**File**: `src/mcp_server_browser_use/skills/manifest.py`
+**File**: `src/mcp_server_browser_use/recipes/manifest.py`
 
 ```python
 from pydantic import BaseModel
@@ -509,7 +511,7 @@ class SkillManifest(BaseModel):
 
 #### 1.3 Add Skill Registry (Oracle: Dual-Source Architecture)
 
-**File**: `src/mcp_server_browser_use/skills/registry.py`
+**File**: `src/mcp_server_browser_use/recipes/registry.py`
 
 The system needs TWO skill sources with a unified query interface:
 
@@ -518,7 +520,7 @@ class SkillLibrary:
     """Read-only shipped skills (bundled with package)."""
     
     def __init__(self, library_dir: Path):
-        self.library_dir = library_dir  # e.g., src/mcp_server_browser_use/skills/library/
+        self.library_dir = library_dir  # e.g., src/mcp_server_browser_use/recipes/library/
         self._index: dict[str, Skill] = {}
     
     def load(self) -> None:
@@ -531,8 +533,8 @@ class SkillRegistry:
     """Unified query interface across user skills + library skills."""
     
     def __init__(self, store: SkillStore, library: SkillLibrary):
-        self.store = store      # User-created skills (~/.config/browser-skills/)
-        self.library = library  # Shipped skills (read-only)
+        self.store = store      # User-created recipes (~/.config/browser-recipes/)
+        self.library = library  # Shipped recipes (read-only)
     
     def get(self, name: str) -> Skill | None:
         """Get skill by name. User skills shadow library skills."""
@@ -560,7 +562,7 @@ class SkillRegistry:
 
 #### 1.4 Implement Batch Learner
 
-**File**: `src/mcp_server_browser_use/skills/batch.py`
+**File**: `src/mcp_server_browser_use/recipes/batch.py`
 
 - [ ] Create SkillBatchLearner class
 - [ ] **CRITICAL**: Use `example_params` from manifest to populate task
@@ -571,19 +573,19 @@ class SkillRegistry:
 - [ ] Stamp metadata (category, subcategory, tags) onto learned skills
 - [ ] Generate summary report
 - [ ] **Save response fixtures** for replay verification
-- [ ] Add CLI command: `mcp-server-browser-use skills learn-batch`
+- [ ] Add CLI command: `mcp-server-browser-use recipe learn-batch`
 
 #### 1.5 Add Replay Test Infrastructure (NOT VCR)
 
-**File**: `src/mcp_server_browser_use/skills/verifier.py`
+**File**: `src/mcp_server_browser_use/recipes/verifier.py`
 
-- [ ] Create SkillVerifier class
+- [ ] Create RecipeVerifier class
 - [ ] Implement verify() with JMESPath validation
 - [ ] Add fixture loading from responses directory
-- [ ] Add CLI command: `mcp-server-browser-use skills verify`
+- [ ] Add CLI command: `mcp-server-browser-use recipe verify`
 - [ ] Create fixtures directory structure
 - [ ] Implement replay_fixture pytest fixture
-- [ ] Write test_skills_replay.py with example test
+- [ ] Write test_recipes_replay.py with example test
 
 ---
 
@@ -601,7 +603,7 @@ class SkillRegistry:
 | Replit | templates-list | medium | No |
 
 ```yaml
-# examples/skills/manifest.yaml - Developer section
+# examples/recipes/manifest.yaml - Developer section
 
 developer:
   description: "Developer tools and infrastructure"
@@ -1141,9 +1143,9 @@ async def skill_categories() -> str:
 
 ### Internal References
 
-- Skills architecture: `src/mcp_server_browser_use/skills/`
-- Existing tests: `tests/test_skills.py`
-- Security patterns: `tests/test_skills_security.py`
+- Recipes architecture: `src/mcp_server_browser_use/recipes/`
+- Existing tests: `tests/test_recipes.py`
+- Security patterns: `tests/test_recipes_security.py`
 
 ### External References
 
