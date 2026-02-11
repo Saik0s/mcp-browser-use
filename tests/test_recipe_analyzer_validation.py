@@ -242,3 +242,18 @@ def test_store_record_usage_overwrites_existing_recipe(tmp_path) -> None:
     loaded = store.load("my-recipe")
     assert loaded is not None
     assert loaded.success_count == 1
+
+
+@pytest.mark.anyio
+async def test_store_async_wrappers_round_trip(tmp_path) -> None:
+    store = RecipeStore(str(tmp_path))
+    recipe = Recipe(
+        name="async-recipe",
+        description="v1",
+        original_task="task",
+        request=RecipeRequest(url="https://example.com/search?q={query}", method="GET", headers={"Accept": "application/json"}, response_type="json"),
+    )
+    await store.asave(recipe, overwrite=True)
+    loaded = await store.aload("async-recipe")
+    assert loaded is not None
+    assert loaded.name == "async-recipe"
