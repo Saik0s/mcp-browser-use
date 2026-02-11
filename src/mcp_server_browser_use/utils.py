@@ -3,19 +3,23 @@
 import json
 import logging
 import re
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
+JsonPrimitive = str | int | float | bool | None
+JsonValue = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
+JsonObject = dict[str, JsonValue]
+
 
 def save_execution_result(
     content: str,
     prefix: str = "result",
-    metadata: dict[str, Any] | None = None,
+    metadata: JsonObject | None = None,
 ) -> Path:
     """Save execution result to a file in the results directory.
 
@@ -28,11 +32,13 @@ def save_execution_result(
         Path to the saved file.
     """
     results_dir = settings.get_results_dir()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Timestamp alone (to seconds) can collide under concurrency.
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    nonce = uuid.uuid4().hex[:8]
 
     # Sanitize prefix for filesystem
     safe_prefix = re.sub(r"[^\w\-]", "_", prefix)[:30]
-    filename = f"{timestamp}_{safe_prefix}.md"
+    filename = f"{timestamp}_{safe_prefix}_{nonce}.md"
     file_path = results_dir / filename
 
     file_path.write_text(content, encoding="utf-8")

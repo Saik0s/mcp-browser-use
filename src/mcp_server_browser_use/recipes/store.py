@@ -2,6 +2,7 @@
 
 import logging
 import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +15,26 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 _ALLOWED_RESPONSE_TYPES = {"json", "html", "text"}
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Atomically write text to `path` using temp + fsync + os.replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.tmp.", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _validate_recipe_for_storage(recipe: Recipe) -> None:
@@ -154,9 +175,10 @@ class RecipeStore:
         path = self._recipe_path(recipe.name)
 
         data = recipe.to_dict()
-
-        with path.open("w", encoding="utf-8") as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        content = yaml.safe_dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        if not content.endswith("\n"):
+            content += "\n"
+        _atomic_write_text(path, content)
 
         logger.info(f"Saved recipe: {recipe.name} to {path}")
         return path
