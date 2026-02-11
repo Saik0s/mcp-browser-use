@@ -399,6 +399,7 @@ def _json_key_sample(body: str, *, max_chars: int = 200) -> str | None:
     - Try json.loads and walk keys into dot paths (stable signal).
     - If that fails (partial/truncated/invalid JSON), fall back to regex `"key":` scanning.
     """
+
     def emit_paths(value: object, prefix: str, out: list[str], budget: int) -> None:
         if budget <= 0:
             return
