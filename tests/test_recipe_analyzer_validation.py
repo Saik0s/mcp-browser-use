@@ -203,3 +203,42 @@ def test_store_save_is_atomic_on_replace_failure(tmp_path, monkeypatch) -> None:
     assert loaded is not None
     assert loaded.description == "v1"
     assert not list(tmp_path.glob(".example.yaml.tmp.*"))
+
+
+def test_store_save_slugifies_and_suffixes_on_collision(tmp_path) -> None:
+    store = RecipeStore(str(tmp_path))
+
+    recipe_1 = Recipe(
+        name="My Recipe!",
+        description="v1",
+        original_task="task",
+        request=RecipeRequest(url="https://example.com/search?q={query}", method="GET", headers={"Accept": "application/json"}, response_type="json"),
+    )
+    path_1 = store.save(recipe_1)
+    assert recipe_1.name == "my-recipe"
+    assert path_1.name == "my-recipe.yaml"
+
+    recipe_2 = Recipe(
+        name="My Recipe",
+        description="v2",
+        original_task="task",
+        request=RecipeRequest(url="https://example.com/search?q={query}", method="GET", headers={"Accept": "application/json"}, response_type="json"),
+    )
+    path_2 = store.save(recipe_2)
+    assert recipe_2.name == "my-recipe-2"
+    assert path_2.name == "my-recipe-2.yaml"
+
+
+def test_store_record_usage_overwrites_existing_recipe(tmp_path) -> None:
+    store = RecipeStore(str(tmp_path))
+    recipe = Recipe(
+        name="my-recipe",
+        description="v1",
+        original_task="task",
+        request=RecipeRequest(url="https://example.com/search?q={query}", method="GET", headers={"Accept": "application/json"}, response_type="json"),
+    )
+    store.save(recipe, overwrite=True)
+    store.record_usage("my-recipe", success=True)
+    loaded = store.load("my-recipe")
+    assert loaded is not None
+    assert loaded.success_count == 1

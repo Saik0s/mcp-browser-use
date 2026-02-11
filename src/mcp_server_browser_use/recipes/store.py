@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,14 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 _ALLOWED_RESPONSE_TYPES = {"json", "html", "text"}
+
+
+def _slugify_name(name: str) -> str:
+    """Convert an arbitrary recipe name into a stable filesystem-safe slug."""
+    slug = name.strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return slug or "recipe"
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -123,10 +132,16 @@ class RecipeStore:
         logger.debug(f"Recipes directory: {self.directory}")
 
     def _recipe_path(self, name: str) -> Path:
-        """Get path for a recipe file."""
-        # Sanitize name for filename
-        safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in name.lower())
-        return self.directory / f"{safe_name}.yaml"
+        """Get path for a recipe file (name is slugified)."""
+        return self.directory / f"{_slugify_name(name)}.yaml"
+
+    def _next_available_slug(self, base_slug: str) -> str:
+        """Find an unused slug, using numeric suffixes (-2, -3, ...)."""
+        for i in range(1, 10_000):
+            slug = base_slug if i == 1 else f"{base_slug}-{i}"
+            if not (self.directory / f"{slug}.yaml").exists():
+                return slug
+        raise RuntimeError(f"Failed to find available recipe name for base slug {base_slug!r}")
 
     def load(self, name: str) -> Recipe | None:
         """Load a recipe by name.
@@ -162,17 +177,24 @@ class RecipeStore:
             logger.error(f"Invalid recipe definition in {path}: {e}")
             return None
 
-    def save(self, recipe: Recipe) -> Path:
+    def save(self, recipe: Recipe, *, overwrite: bool = False) -> Path:
         """Save a recipe to file.
 
         Args:
             recipe: Recipe to save
+            overwrite: When true, replace any existing recipe file. When false, pick a unique name on collision.
 
         Returns:
             Path to saved file
         """
+        base_slug = _slugify_name(recipe.name)
+        if overwrite:
+            slug = base_slug
+        else:
+            slug = base_slug if not (self.directory / f"{base_slug}.yaml").exists() else self._next_available_slug(base_slug)
+        recipe.name = slug
         _validate_recipe_for_storage(recipe)
-        path = self._recipe_path(recipe.name)
+        path = self._recipe_path(slug)
 
         data = recipe.to_dict()
         content = yaml.safe_dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
@@ -251,7 +273,7 @@ class RecipeStore:
         else:
             recipe.failure_count += 1
 
-        self.save(recipe)
+        self.save(recipe, overwrite=True)
 
     def to_yaml(self, recipe: Recipe) -> str:
         """Convert recipe to YAML string.
