@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +15,18 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 _ALLOWED_RESPONSE_TYPES = {"json", "html", "text"}
+
+_SLUG_INVALID_CHARS_RE = re.compile(r"[^a-z0-9_-]+")
+_SLUG_DASH_RUN_RE = re.compile(r"-{2,}")
+
+
+def _slugify_name(name: str) -> str:
+    raw = (name or "").strip().lower()
+    if not raw:
+        return "recipe"
+    slug = _SLUG_INVALID_CHARS_RE.sub("-", raw)
+    slug = _SLUG_DASH_RUN_RE.sub("-", slug).strip("-")
+    return slug or "recipe"
 
 
 def _validate_recipe_for_storage(recipe: Recipe) -> None:
@@ -103,9 +116,31 @@ class RecipeStore:
 
     def _recipe_path(self, name: str) -> Path:
         """Get path for a recipe file."""
-        # Sanitize name for filename
-        safe_name = "".join(c if c.isalnum() or c in "-_" else "-" for c in name.lower())
-        return self.directory / f"{safe_name}.yaml"
+        slug = _slugify_name(name)
+        return self.directory / f"{slug}.yaml"
+
+    def _find_recipe_path(self, name: str) -> Path | None:
+        """Find the YAML file path for a recipe name, handling slug collisions."""
+        slug = _slugify_name(name)
+        base = self.directory / f"{slug}.yaml"
+
+        def _matches(path: Path) -> bool:
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+            except Exception:
+                return False
+            if not isinstance(data, dict):
+                return False
+            return str(data.get("name") or "") == name
+
+        if base.exists() and _matches(base):
+            return base
+
+        for path in sorted(self.directory.glob(f"{slug}-*.yaml")):
+            if path.is_file() and _matches(path):
+                return path
+        return None
 
     def load(self, name: str) -> Recipe | None:
         """Load a recipe by name.
@@ -116,9 +151,9 @@ class RecipeStore:
         Returns:
             Recipe if found, None otherwise
         """
-        path = self._recipe_path(name)
+        path = self._find_recipe_path(name)
 
-        if not path.exists():
+        if path is None or not path.exists():
             logger.warning(f"Recipe not found: {name} (expected at {path})")
             return None
 
@@ -151,7 +186,20 @@ class RecipeStore:
             Path to saved file
         """
         _validate_recipe_for_storage(recipe)
-        path = self._recipe_path(recipe.name)
+        existing = self._find_recipe_path(recipe.name)
+        if existing is not None:
+            path = existing
+        else:
+            path = self._recipe_path(recipe.name)
+            if path.exists():
+                slug = _slugify_name(recipe.name)
+                for i in range(2, 10_000):
+                    candidate = self.directory / f"{slug}-{i}.yaml"
+                    if not candidate.exists():
+                        path = candidate
+                        break
+                else:
+                    raise ValueError(f"Unable to resolve recipe name collision for slug {slug!r}")
 
         data = recipe.to_dict()
 
@@ -170,7 +218,7 @@ class RecipeStore:
         Returns:
             True if deleted, False if not found
         """
-        path = self._recipe_path(name)
+        path = self._find_recipe_path(name) or self._recipe_path(name)
 
         if not path.exists():
             return False
@@ -210,7 +258,7 @@ class RecipeStore:
         Returns:
             True if recipe exists
         """
-        return self._recipe_path(name).exists()
+        return self._find_recipe_path(name) is not None
 
     def record_usage(self, name: str, success: bool) -> None:
         """Record recipe usage statistics.

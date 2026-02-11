@@ -1,3 +1,5 @@
+from collections.abc import Awaitable
+
 import pytest
 
 from mcp_server_browser_use.recipes.analyzer import RecipeAnalyzer
@@ -8,7 +10,7 @@ from mcp_server_browser_use.recipes.store import RecipeStore
 class _DummyLLM:
     name: str = "dummy"
 
-    async def ainvoke(self, messages: list[object], output_format: type[object] | None = None, **kwargs: object) -> object:  # pragma: no cover
+    def ainvoke(self, messages: list[object], output_format: type[object] | None = None, **kwargs: object) -> Awaitable[object]:  # pragma: no cover
         raise AssertionError("Tests should not call the LLM")
 
 
@@ -123,8 +125,8 @@ def test_store_save_rejects_invalid_request_types(tmp_path) -> None:
     )
 
     # Inject an invalid runtime type without breaking static typing of the constructor.
-    request_obj: object = recipe.request
-    setattr(request_obj, "body_template", {"q": "{query}"})
+    assert recipe.request is not None
+    vars(recipe.request)["body_template"] = {"q": "{query}"}
 
     with pytest.raises(ValueError, match="body_template"):
         store.save(recipe)
@@ -152,3 +154,48 @@ def test_store_save_accepts_valid_recipe(tmp_path) -> None:
     assert loaded.request is not None
     assert loaded.request.method == "GET"
     assert loaded.request.response_type == "json"
+
+
+def test_store_save_name_collision_suffix_and_load_by_original_name(tmp_path) -> None:
+    store = RecipeStore(str(tmp_path))
+    recipe1 = Recipe(
+        name="a*b",
+        description="desc1",
+        original_task="task1",
+        request=RecipeRequest(
+            url="https://example.com/search?q={query}",
+            method="GET",
+            headers={"Accept": "application/json"},
+            response_type="json",
+            allowed_domains=["example.com"],
+        ),
+    )
+    recipe2 = Recipe(
+        name="a?b",
+        description="desc2",
+        original_task="task2",
+        request=RecipeRequest(
+            url="https://example.com/search?q={query}",
+            method="GET",
+            headers={"Accept": "application/json"},
+            response_type="json",
+            allowed_domains=["example.com"],
+        ),
+    )
+
+    p1 = store.save(recipe1)
+    p2 = store.save(recipe2)
+
+    assert p1.exists()
+    assert p2.exists()
+    assert p1.name == "a-b.yaml"
+    assert p2.name == "a-b-2.yaml"
+
+    loaded1 = store.load("a*b")
+    loaded2 = store.load("a?b")
+    assert loaded1 is not None and loaded1.name == "a*b"
+    assert loaded2 is not None and loaded2.name == "a?b"
+
+    # Saving again should update the same suffixed file, not allocate a new one.
+    store.save(recipe2)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a-b-2.yaml", "a-b.yaml"]
