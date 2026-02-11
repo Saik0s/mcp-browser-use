@@ -1,5 +1,6 @@
 """SQLite-based task store for persistence and history."""
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,43 +31,49 @@ class TaskStore:
             db_path = get_config_dir() / "tasks.db"
         self.db_path = db_path
         self._initialized = False
+        self._init_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Create schema if not exists."""
         if self._initialized:
             return
 
-        async with aiosqlite.connect(self.db_path) as db:
-            # Enable WAL mode for better concurrency
-            await db.execute("PRAGMA journal_mode = WAL")
-            await db.execute("PRAGMA busy_timeout = 5000")
+        # Concurrent callers (multiple background tasks) can race and lock the DB on PRAGMAs/DDL.
+        async with self._init_lock:
+            if self._initialized:
+                return
 
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS tasks (
-                    task_id TEXT PRIMARY KEY,
-                    tool_name TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    stage TEXT,
-                    created_at TEXT NOT NULL,
-                    started_at TEXT,
-                    completed_at TEXT,
-                    progress_current INTEGER DEFAULT 0,
-                    progress_total INTEGER DEFAULT 0,
-                    progress_message TEXT,
-                    input_params TEXT NOT NULL,
-                    result TEXT,
-                    error TEXT,
-                    session_id TEXT
-                )
-            """)
+            async with aiosqlite.connect(self.db_path) as db:
+                # Enable WAL mode for better concurrency
+                await db.execute("PRAGMA journal_mode = WAL")
+                await db.execute("PRAGMA busy_timeout = 5000")
 
-            # Indexes for common queries
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_status ON tasks(status)")
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON tasks(created_at)")
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_tool_name ON tasks(tool_name)")
-            await db.commit()
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS tasks (
+                        task_id TEXT PRIMARY KEY,
+                        tool_name TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        stage TEXT,
+                        created_at TEXT NOT NULL,
+                        started_at TEXT,
+                        completed_at TEXT,
+                        progress_current INTEGER DEFAULT 0,
+                        progress_total INTEGER DEFAULT 0,
+                        progress_message TEXT,
+                        input_params TEXT NOT NULL,
+                        result TEXT,
+                        error TEXT,
+                        session_id TEXT
+                    )
+                """)
 
-        self._initialized = True
+                # Indexes for common queries
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_status ON tasks(status)")
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON tasks(created_at)")
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_tool_name ON tasks(tool_name)")
+                await db.commit()
+
+            self._initialized = True
 
     async def create_task(self, task: TaskRecord) -> None:
         """Insert new task record."""
@@ -133,48 +140,34 @@ class TaskStore:
         """Update task status and optionally result/error."""
         await self.initialize()
 
-        # Whitelist of allowed column assignments to prevent SQL injection
-        ALLOWED_UPDATES = {
-            "status = ?",
-            "started_at = COALESCE(started_at, ?)",
-            "completed_at = ?",
-            "result = ?",
-            "error = ?",
-        }
+        started_at: str | None = None
+        completed_at: str | None = None
+        if status == TaskStatus.RUNNING:
+            started_at = datetime.now(UTC).isoformat()
+        elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            completed_at = datetime.now(UTC).isoformat()
+
+        truncated_result: str | None = None
+        if result is not None:
+            truncated_result = result[:10000] if result else None
+
+        truncated_error: str | None = None
+        if error is not None:
+            truncated_error = error[:2000] if error else None
 
         async with aiosqlite.connect(self.db_path) as db:
-            updates = ["status = ?"]
-            params: list = [status.value]
-
-            if status == TaskStatus.RUNNING:
-                # Only set started_at if it's currently NULL
-                update_clause = "started_at = COALESCE(started_at, ?)"
-                updates.append(update_clause)
-                params.append(datetime.now(UTC).isoformat())
-            elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
-                update_clause = "completed_at = ?"
-                updates.append(update_clause)
-                params.append(datetime.now(UTC).isoformat())
-
-            if result is not None:
-                update_clause = "result = ?"
-                updates.append(update_clause)
-                params.append(result[:10000] if result else None)  # Truncate long results
-            if error is not None:
-                update_clause = "error = ?"
-                updates.append(update_clause)
-                params.append(error[:2000] if error else None)  # Truncate long errors
-
-            # Validate all updates are from whitelist
-            for update in updates:
-                if update not in ALLOWED_UPDATES:
-                    raise ValueError(f"Invalid SQL update clause: {update}")
-
-            params.append(task_id)
-
-            # Build query safely with validated column assignments
-            query = "UPDATE tasks SET " + ", ".join(updates) + " WHERE task_id = ?"
-            await db.execute(query, params)
+            await db.execute(
+                """
+                UPDATE tasks
+                SET status = ?,
+                    started_at = COALESCE(started_at, ?),
+                    completed_at = COALESCE(completed_at, ?),
+                    result = COALESCE(?, result),
+                    error = COALESCE(?, error)
+                WHERE task_id = ?
+            """,
+                (status.value, started_at, completed_at, truncated_result, truncated_error, task_id),
+            )
             await db.commit()
 
     async def get_task(self, task_id: str) -> TaskRecord | None:
@@ -299,6 +292,13 @@ class TaskStore:
     @staticmethod
     def _row_to_task(row: aiosqlite.Row) -> TaskRecord:
         """Convert DB row to TaskRecord."""
+        input_params_raw = row["input_params"]
+        try:
+            loaded = json.JSONDecoder().decode(input_params_raw)
+        except json.JSONDecodeError:
+            loaded = {}
+        input_params = loaded if isinstance(loaded, dict) else {}
+
         return TaskRecord(
             task_id=row["task_id"],
             tool_name=row["tool_name"],
@@ -310,7 +310,7 @@ class TaskStore:
             progress_current=row["progress_current"],
             progress_total=row["progress_total"],
             progress_message=row["progress_message"],
-            input_params=json.loads(row["input_params"]),
+            input_params=input_params,
             result=row["result"],
             error=row["error"],
             session_id=row["session_id"],

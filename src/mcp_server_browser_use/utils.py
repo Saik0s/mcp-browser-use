@@ -28,12 +28,23 @@ def save_execution_result(
         Path to the saved file.
     """
     results_dir = settings.get_results_dir()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Include microseconds to avoid collisions when called multiple times per second.
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
     # Sanitize prefix for filesystem
     safe_prefix = re.sub(r"[^\w\-]", "_", prefix)[:30]
-    filename = f"{timestamp}_{safe_prefix}.md"
-    file_path = results_dir / filename
+    base = f"{timestamp}_{safe_prefix}"
+    file_path = results_dir / f"{base}.md"
+    # Extremely unlikely, but still handle same-microsecond collisions deterministically.
+    if file_path.exists():
+        for i in range(1, 10_000):
+            candidate = results_dir / f"{base}_{i}.md"
+            if not candidate.exists():
+                file_path = candidate
+                break
+        else:
+            raise RuntimeError("Failed to allocate a unique result filename after 10,000 attempts")
+    filename = file_path.name
 
     file_path.write_text(content, encoding="utf-8")
 
