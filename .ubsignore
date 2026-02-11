@@ -7,3 +7,8 @@ tests/**
 **/tests/**
 test_*.py
 **/test_*.py
+
+# Ignore untracked in-progress swarm artifacts (kept on disk, not part of current bead commits).
+src/mcp_server_browser_use/recipes/candidates.py
+src/mcp_server_browser_use/recipes/minimizer.py
+src/mcp_server_browser_use/recipes/verifier.py

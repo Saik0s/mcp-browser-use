@@ -1,3 +1,5 @@
+from collections.abc import Awaitable
+
 import pytest
 
 from mcp_server_browser_use.recipes.analyzer import RecipeAnalyzer
@@ -8,7 +10,7 @@ from mcp_server_browser_use.recipes.store import RecipeStore
 class _DummyLLM:
     name: str = "dummy"
 
-    async def ainvoke(self, messages: list[object], output_format: type[object] | None = None, **kwargs: object) -> object:  # pragma: no cover
+    def ainvoke(self, messages: list[object], output_format: type[object] | None = None, **kwargs: object) -> Awaitable[object]:  # pragma: no cover
         raise AssertionError("Tests should not call the LLM")
 
 
@@ -124,7 +126,8 @@ def test_store_save_rejects_invalid_request_types(tmp_path) -> None:
 
     # Inject an invalid runtime type without breaking static typing of the constructor.
     request_obj: object = recipe.request
-    setattr(request_obj, "body_template", {"q": "{query}"})
+    field_name = "body_template"
+    setattr(request_obj, field_name, {"q": "{query}"})
 
     with pytest.raises(ValueError, match="body_template"):
         store.save(recipe)
@@ -152,3 +155,51 @@ def test_store_save_accepts_valid_recipe(tmp_path) -> None:
     assert loaded.request is not None
     assert loaded.request.method == "GET"
     assert loaded.request.response_type == "json"
+
+
+def test_store_save_is_atomic_on_replace_failure(tmp_path, monkeypatch) -> None:
+    store = RecipeStore(str(tmp_path))
+    recipe_v1 = Recipe(
+        name="example",
+        description="v1",
+        original_task="task",
+        request=RecipeRequest(
+            url="https://example.com/search?q={query}",
+            method="GET",
+            headers={"Accept": "application/json"},
+            response_type="json",
+        ),
+    )
+    store.save(recipe_v1)
+
+    path = tmp_path / "example.yaml"
+    before = path.read_text(encoding="utf-8")
+
+    import mcp_server_browser_use.recipes.store as store_module
+
+    def _boom(src: object, dst: object) -> None:
+        raise OSError("boom")
+
+    monkeypatch.setattr(store_module.os, "replace", _boom)
+
+    recipe_v2 = Recipe(
+        name="example",
+        description="v2",
+        original_task="task",
+        request=RecipeRequest(
+            url="https://example.com/search?q={query}",
+            method="GET",
+            headers={"Accept": "application/json"},
+            response_type="json",
+        ),
+    )
+
+    with pytest.raises(OSError, match="boom"):
+        store.save(recipe_v2)
+
+    after = path.read_text(encoding="utf-8")
+    assert after == before
+    loaded = store.load("example")
+    assert loaded is not None
+    assert loaded.description == "v1"
+    assert not list(tmp_path.glob(".example.yaml.tmp.*"))
