@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -212,7 +213,7 @@ class RecipeStore:
 
     async def save_async(self, recipe: Recipe, *, overwrite: bool = False) -> Path:
         """Async wrapper for save() to avoid blocking the event loop."""
-        return await to_thread.run_sync(self.save, recipe, overwrite=overwrite)
+        return await to_thread.run_sync(partial(self.save, recipe, overwrite=overwrite))
 
     def delete(self, name: str) -> bool:
         """Delete a recipe by name.
